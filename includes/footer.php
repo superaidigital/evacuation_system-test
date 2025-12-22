@@ -30,23 +30,27 @@
         // Function to check mobile view
         const isMobile = () => window.innerWidth < 992;
 
-        btnToggle.addEventListener('click', function() {
-            if (isMobile()) {
-                // Mobile: Toggle class 'show-mobile' and Overlay
-                sidebar.classList.toggle('show-mobile');
-                overlay.classList.toggle('show');
-            } else {
-                // Desktop: Toggle class 'collapsed' and Content 'expanded'
-                sidebar.classList.toggle('collapsed');
-                content.classList.toggle('expanded');
-            }
-        });
+        if (btnToggle) {
+            btnToggle.addEventListener('click', function() {
+                if (isMobile()) {
+                    // Mobile: Toggle class 'show-mobile' and Overlay
+                    sidebar.classList.toggle('show-mobile');
+                    overlay.classList.toggle('show');
+                } else {
+                    // Desktop: Toggle class 'collapsed' and Content 'expanded'
+                    sidebar.classList.toggle('collapsed');
+                    content.classList.toggle('expanded');
+                }
+            });
+        }
 
         // Click Overlay to Close (Mobile Only)
-        overlay.addEventListener('click', function() {
-            sidebar.classList.remove('show-mobile');
-            overlay.classList.remove('show');
-        });
+        if (overlay) {
+            overlay.addEventListener('click', function() {
+                sidebar.classList.remove('show-mobile');
+                overlay.classList.remove('show');
+            });
+        }
 
         // Auto-Expand Active Submenu
         const activeLink = document.querySelector('#sidebar ul.components li a.active');
@@ -60,7 +64,15 @@
                 const parentToggle = document.querySelector(`a[href="#${parentCollapse.id}"]`);
                 if (parentToggle) {
                     parentToggle.classList.add('text-white');
-                    parentToggle.querySelector('i').classList.replace('text-warning', 'text-white'); // Change icon color
+                    const icon = parentToggle.querySelector('i');
+                    if (icon) {
+                         // Check if class exists before replacing
+                        if (icon.classList.contains('text-warning')) {
+                            icon.classList.replace('text-warning', 'text-white');
+                        } else {
+                             icon.classList.add('text-white');
+                        }
+                    }
                     parentToggle.parentElement.style.backgroundColor = 'rgba(255,255,255,0.05)';
                     parentToggle.setAttribute('aria-expanded', 'true');
                 }

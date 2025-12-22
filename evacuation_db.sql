@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Dec 21, 2025 at 10:17 AM
+-- Generation Time: Dec 22, 2025 at 10:37 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.1.25
 
@@ -29,23 +29,38 @@ SET time_zone = "+00:00";
 
 CREATE TABLE `caretakers` (
   `id` int(11) NOT NULL,
-  `prefix` varchar(50) DEFAULT NULL COMMENT 'คำนำหน้า',
-  `first_name` varchar(100) NOT NULL COMMENT 'ชื่อจริง',
-  `last_name` varchar(100) NOT NULL COMMENT 'นามสกุล',
-  `position` varchar(100) DEFAULT NULL COMMENT 'ตำแหน่ง/หน้าที่ เช่น พยาบาล, อาสาสมัคร',
-  `phone` varchar(50) DEFAULT NULL COMMENT 'เบอร์โทรศัพท์ติดต่อ',
-  `shelter_id` int(11) DEFAULT NULL COMMENT 'ID ของศูนย์พักพิงที่รับผิดชอบ',
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT NULL ON UPDATE current_timestamp()
+  `prefix` varchar(50) DEFAULT NULL,
+  `first_name` varchar(100) NOT NULL DEFAULT '',
+  `last_name` varchar(100) NOT NULL DEFAULT '',
+  `shelter_id` int(11) NOT NULL,
+  `full_name` varchar(100) NOT NULL,
+  `phone` varchar(20) NOT NULL,
+  `position` varchar(100) DEFAULT NULL,
+  `status` enum('active','inactive') NOT NULL DEFAULT 'active'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dumping data for table `caretakers`
 --
 
-INSERT INTO `caretakers` (`id`, `prefix`, `first_name`, `last_name`, `position`, `phone`, `shelter_id`, `created_at`, `updated_at`) VALUES
-(2, 'นาย', 'สมศักดิ์', 'รักดี', 'หัวหน้าศูนย์', '081-234-5678', 1, '2025-12-21 07:29:28', NULL),
-(3, 'นาย', 'นายปฐวีกานต์', 'ศรีคราม', 'zxczc', '0981051534', 22, '2025-12-21 08:10:05', '2025-12-21 08:49:08');
+INSERT INTO `caretakers` (`id`, `prefix`, `first_name`, `last_name`, `shelter_id`, `full_name`, `phone`, `position`, `status`) VALUES
+(1, 'นาย', 'นายปฐวีกานต์', 'ศรีคราม', 1, 'อาจารย์สมปอง', '081-234-5678', 'หัวหน้าศูนย์พักพิง', 'active'),
+(2, 'นาย', 'นายปฐวีกานต์', 'ศรีคราม', 2, 'พระครูวิจิตร', '089-876-5432', 'ผู้ดูแลสถานที่', 'active');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `distribution_logs`
+--
+
+CREATE TABLE `distribution_logs` (
+  `id` int(11) NOT NULL,
+  `evacuee_id` int(11) NOT NULL,
+  `item_name` varchar(100) DEFAULT NULL,
+  `quantity` int(11) DEFAULT NULL,
+  `given_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `given_by` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -56,21 +71,47 @@ INSERT INTO `caretakers` (`id`, `prefix`, `first_name`, `last_name`, `position`,
 CREATE TABLE `evacuees` (
   `id` int(11) NOT NULL,
   `incident_id` int(11) NOT NULL,
-  `shelter_id` int(11) NOT NULL,
-  `id_card` varchar(13) DEFAULT NULL,
+  `shelter_id` int(11) DEFAULT NULL,
+  `stay_type` enum('shelter','outside') NOT NULL DEFAULT 'shelter' COMMENT 'ประเภทการพัก',
+  `stay_detail` text DEFAULT NULL COMMENT 'รายละเอียดที่พัก (กรณีพักนอกศูนย์)',
+  `id_card` varchar(13) DEFAULT NULL COMMENT 'เลขบัตรประชาชน',
+  `address_card` text DEFAULT NULL COMMENT 'ที่อยู่ตามบัตรประชาชน',
   `prefix` varchar(20) DEFAULT NULL,
   `first_name` varchar(100) NOT NULL,
   `last_name` varchar(100) NOT NULL,
   `phone` varchar(20) DEFAULT NULL,
   `gender` enum('male','female','other') DEFAULT NULL,
   `age` int(3) DEFAULT NULL,
-  `health_condition` text DEFAULT NULL,
-  `status` enum('registered','checked_in','checked_out','transferred') NOT NULL DEFAULT 'registered',
-  `check_in_date` datetime DEFAULT current_timestamp() COMMENT 'วันที่เข้าพัก',
-  `check_out_date` datetime DEFAULT NULL COMMENT 'วันที่จำหน่ายออก',
-  `registered_by` int(11) NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+  `health_condition` text DEFAULT NULL COMMENT 'โรคประจำตัว/ยาที่แพ้',
+  `registered_by` int(11) DEFAULT NULL COMMENT 'ID เจ้าหน้าที่ที่ลงทะเบียนให้',
+  `check_in_date` datetime NOT NULL DEFAULT current_timestamp(),
+  `check_out_date` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL ON UPDATE current_timestamp(),
+  `created_at` datetime NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `evacuees`
+--
+
+INSERT INTO `evacuees` (`id`, `incident_id`, `shelter_id`, `stay_type`, `stay_detail`, `id_card`, `address_card`, `prefix`, `first_name`, `last_name`, `phone`, `gender`, `age`, `health_condition`, `registered_by`, `check_in_date`, `check_out_date`, `updated_at`, `created_at`) VALUES
+(1, 1, 1, 'shelter', NULL, '1330000111222', NULL, 'นาย', 'สมศักดิ์', 'รักชาติ', '081-111-2222', 'male', 45, 'ความดันโลหิตสูง', 2, '2025-12-22 14:12:37', NULL, NULL, '2025-12-22 14:12:37'),
+(2, 1, 1, 'shelter', NULL, '1330000333444', NULL, 'นาง', 'สมศรี', 'มีสุข', '089-333-4444', 'female', 42, '-', 2, '2025-12-22 14:12:37', NULL, NULL, '2025-12-22 14:12:37'),
+(3, 1, 1, 'shelter', NULL, '1330000555666', NULL, 'ด.ช.', 'เก่ง', 'รักชาติ', NULL, 'male', 10, 'แพ้อาหารทะเล', 2, '2025-12-22 14:12:37', NULL, NULL, '2025-12-22 14:12:37'),
+(4, 1, NULL, 'outside', 'บ้านญาติ', '1332000000946', '', '', 'วิชัย', 'ใจดี', '090-555-6666', 'male', 60, 'เบาหวาน, เดินไม่สะดวก', 3, '2025-12-22 14:12:37', NULL, '2025-12-22 16:16:23', '2025-12-22 14:12:37'),
+(5, 3, NULL, 'outside', 'บ้านญาติ', '1332000000946', '', 'นาย', 'วิชัย', 'ใจดี', '090-555-6666', 'male', 60, '', 1, '2025-12-22 16:15:33', NULL, NULL, '2025-12-22 16:15:33');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `evacuee_needs`
+--
+
+CREATE TABLE `evacuee_needs` (
+  `id` int(11) NOT NULL,
+  `evacuee_id` int(11) NOT NULL,
+  `need_type` enum('pregnant','disabled','elderly','infant','chronic_disease') NOT NULL,
+  `details` text DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -81,42 +122,54 @@ CREATE TABLE `evacuees` (
 
 CREATE TABLE `incidents` (
   `id` int(11) NOT NULL,
-  `name` varchar(200) NOT NULL,
-  `type` enum('flood','fire','storm','earthquake','other') NOT NULL,
-  `status` enum('active','closed') NOT NULL DEFAULT 'active',
+  `name` varchar(200) NOT NULL COMMENT 'ชื่อเหตุการณ์ (เช่น น้ำท่วมปี 67)',
+  `type` varchar(50) NOT NULL DEFAULT 'other',
+  `description` text DEFAULT NULL,
   `start_date` date NOT NULL,
   `end_date` date DEFAULT NULL,
+  `status` enum('active','closed') NOT NULL DEFAULT 'active',
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dumping data for table `incidents`
 --
 
-INSERT INTO `incidents` (`id`, `name`, `type`, `status`, `start_date`, `end_date`, `created_at`) VALUES
-(1, 'เหตุปะทะไทย–กัมพูชา ธ.ค. 2568', 'other', 'closed', '2025-12-07', '2025-12-21', '2025-12-21 06:24:33'),
-(2, 'เหตุปะทะไทย–กัมพูชา ธ.ค. 2568 (ครั้งที่ 2)', 'other', 'closed', '2025-12-21', '2025-12-21', '2025-12-21 06:40:46'),
-(3, 'เหตุปะทะไทย–กัมพูชา ธ.ค. 2568 (ครั้งที่ 2)', 'other', 'closed', '2025-12-21', '2025-12-21', '2025-12-21 06:40:52'),
-(4, 'เหตุปะทะไทย–กัมพูชา ธ.ค. 2568 (ครั้งที่ 2)', 'other', 'closed', '2025-12-21', '2025-12-21', '2025-12-21 06:43:03'),
-(5, 'เหตุปะทะไทย–กัมพูชา ธ.ค. 2568 (ครั้งที่ 4)', 'other', 'closed', '2025-12-21', '2025-12-21', '2025-12-21 06:43:22');
+INSERT INTO `incidents` (`id`, `name`, `type`, `description`, `start_date`, `end_date`, `status`, `created_at`) VALUES
+(1, 'อุทกภัย ปี 2567 (ศรีสะเกษ)', 'other', 'น้ำท่วมใหญ่ในพื้นที่อำเภอเมืองและกันทรลักษ์ ระดับน้ำสูงกว่า 1 เมตร', '2024-09-15', NULL, 'active', '2025-12-22 07:12:37'),
+(2, 'วาตภัย พายุฤดูร้อน (เม.ย. 67)', 'other', 'พายุฝนฟ้าคะนอง บ้านเรือนเสียหาย 50 หลังคาเรือน', '2024-04-10', '2024-04-20', 'closed', '2025-12-22 07:12:37'),
+(3, 'เหตุปะทะไทย–กัมพูชา ธ.ค. 2568', 'other', '', '2025-12-22', NULL, 'active', '2025-12-22 07:41:33');
 
 -- --------------------------------------------------------
 
 --
--- Table structure for table `settings`
+-- Table structure for table `inventory`
 --
 
-CREATE TABLE `settings` (
-  `setting_key` varchar(50) NOT NULL,
-  `setting_value` varchar(255) DEFAULT NULL
+CREATE TABLE `inventory` (
+  `id` int(11) NOT NULL,
+  `shelter_id` int(11) NOT NULL,
+  `item_name` varchar(100) NOT NULL,
+  `quantity` int(11) NOT NULL DEFAULT 0,
+  `unit` varchar(20) NOT NULL,
+  `last_updated` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- --------------------------------------------------------
+
 --
--- Dumping data for table `settings`
+-- Table structure for table `inventory_transactions`
 --
 
-INSERT INTO `settings` (`setting_key`, `setting_value`) VALUES
-('current_event', 'เหตุปะทะไทย–กัมพูชา ธ.ค. 2568');
+CREATE TABLE `inventory_transactions` (
+  `id` int(11) NOT NULL,
+  `inventory_id` int(11) NOT NULL,
+  `transaction_type` enum('in','out') NOT NULL COMMENT 'in=รับบริจาค/ซื้อ, out=แจกจ่าย/เสียหาย',
+  `quantity` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL COMMENT 'ผู้ทำรายการ',
+  `note` text DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -126,49 +179,24 @@ INSERT INTO `settings` (`setting_key`, `setting_value`) VALUES
 
 CREATE TABLE `shelters` (
   `id` int(11) NOT NULL,
-  `incident_id` int(11) DEFAULT NULL,
-  `name` varchar(150) NOT NULL,
-  `location` text DEFAULT NULL COMMENT 'รายละเอียดที่ตั้ง',
-  `code` varchar(50) DEFAULT NULL COMMENT 'รหัสศูนย์',
-  `district` varchar(100) NOT NULL,
-  `province` varchar(100) DEFAULT 'ศรีสะเกษ',
-  `contact_person` varchar(100) DEFAULT NULL,
-  `phone` varchar(50) DEFAULT NULL,
-  `capacity` int(11) DEFAULT 100,
-  `subdistrict` varchar(100) DEFAULT NULL,
-  `status` enum('OPEN','CLOSED') DEFAULT 'OPEN',
-  `current_event` varchar(150) DEFAULT NULL,
-  `last_updated` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+  `incident_id` int(11) NOT NULL COMMENT 'ผูกกับเหตุการณ์ไหน',
+  `name` varchar(200) NOT NULL COMMENT 'ชื่อศูนย์',
+  `location` text NOT NULL COMMENT 'ที่ตั้ง',
+  `capacity` int(11) NOT NULL DEFAULT 0 COMMENT 'ความจุสูงสุด',
+  `contact_phone` varchar(20) DEFAULT NULL,
+  `status` enum('open','full','closed') NOT NULL DEFAULT 'open',
+  `last_updated` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dumping data for table `shelters`
 --
 
-INSERT INTO `shelters` (`id`, `incident_id`, `name`, `location`, `code`, `district`, `province`, `contact_person`, `phone`, `capacity`, `subdistrict`, `status`, `current_event`, `last_updated`) VALUES
-(22, NULL, 'ศูนย์อาคารพละวีสมหมาย', NULL, NULL, 'เมือง', 'ศรีสะเกษ', NULL, NULL, 3000, NULL, 'OPEN', 'เหตุปะทะไทย–กัมพูชา ธ.ค. 2568', '2025-12-21 03:36:26'),
-(49, 2, 'อาคารพลศึกษา วีสมหมาย', 'ต.  อ.  จ. ', '', '', '', '', '', 3000, '', 'OPEN', NULL, '2025-12-21 08:04:26');
-
--- --------------------------------------------------------
-
---
--- Table structure for table `shelter_coordinators`
---
-
-CREATE TABLE `shelter_coordinators` (
-  `id` int(11) NOT NULL,
-  `shelter_id` int(11) NOT NULL,
-  `name` varchar(150) NOT NULL,
-  `phone` varchar(50) DEFAULT NULL,
-  `position` varchar(100) DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `shelter_coordinators`
---
-
-INSERT INTO `shelter_coordinators` (`id`, `shelter_id`, `name`, `phone`, `position`) VALUES
-(1, 22, 'นายศักดิ์ชัย กงแก้ว', '095-616-9981', 'หน.ศูนย์');
+INSERT INTO `shelters` (`id`, `incident_id`, `name`, `location`, `capacity`, `contact_phone`, `status`, `last_updated`) VALUES
+(1, 1, 'โรงเรียนสตรีสิริเกศ', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', 500, '045-612-888', 'open', '2025-12-22 14:12:37'),
+(2, 1, 'วัดเจียงอีศรีมงคลวราราม', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', 300, '081-999-1234', 'open', '2025-12-22 14:12:37'),
+(3, 1, 'หอประชุมอำเภอกันทรลักษ์', 'ต.หนองหญ้าลาด อ.กันทรลักษ์', 1000, '045-661-555', 'open', '2025-12-22 14:12:37'),
+(4, 2, 'ศาลากลางหมู่บ้านหนองแคน', 'ต.หนองแคน อ.อุทุมพรพิสัย', 100, '089-777-6666', 'closed', '2025-12-22 14:12:37');
 
 -- --------------------------------------------------------
 
@@ -178,24 +206,36 @@ INSERT INTO `shelter_coordinators` (`id`, `shelter_id`, `name`, `phone`, `positi
 
 CREATE TABLE `system_logs` (
   `id` int(11) NOT NULL,
-  `user_id` int(11) NOT NULL,
-  `action` varchar(50) NOT NULL,
-  `description` text NOT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `action` varchar(50) NOT NULL COMMENT 'ประเภทการกระทำ (Login, Add, Edit)',
+  `description` text DEFAULT NULL COMMENT 'รายละเอียดเพิ่มเติม',
   `ip_address` varchar(45) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dumping data for table `system_logs`
 --
 
 INSERT INTO `system_logs` (`id`, `user_id`, `action`, `description`, `ip_address`, `created_at`) VALUES
-(1, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-21 06:53:45'),
-(2, 2, 'Logout', 'ออกจากระบบ', '::1', '2025-12-21 06:55:18'),
-(3, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-21 08:05:54'),
-(4, 2, 'Add Caretaker', 'เพิ่มผู้ดูแล: นายปฐวีกานต์ ศรีคราม', '::1', '2025-12-21 08:10:05'),
-(5, 2, 'Logout', 'ออกจากระบบ', '::1', '2025-12-21 08:28:03'),
-(6, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายปฐวีกานต์ ศรีคราม', '::1', '2025-12-21 08:49:08');
+(1, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '127.0.0.1', '2025-12-22 07:12:37'),
+(2, 2, 'Login', 'เข้าสู่ระบบสำเร็จ', '127.0.0.1', '2025-12-22 07:12:37'),
+(3, 2, 'Add Evacuee', 'ลงทะเบียน: สมศักดิ์ รักชาติ (Shelter ID: 1)', '127.0.0.1', '2025-12-22 07:12:37'),
+(4, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-22 07:12:47'),
+(5, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-22 07:13:12'),
+(6, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-22 07:22:42'),
+(7, 1, 'Edit Incident', 'แก้ไขภารกิจ ID: 1', '::1', '2025-12-22 07:40:54'),
+(8, 1, 'Edit Incident', 'แก้ไขภารกิจ ID: 2', '::1', '2025-12-22 07:40:59'),
+(9, 1, 'Add Incident', 'เปิดภารกิจใหม่: เหตุปะทะไทย–กัมพูชา ธ.ค. 2568 (other)', '::1', '2025-12-22 07:41:33'),
+(10, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: 2)', '::1', '2025-12-22 08:34:03'),
+(11, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: 2)', '::1', '2025-12-22 08:40:55'),
+(12, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: 2)', '::1', '2025-12-22 08:41:16'),
+(13, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: 2)', '::1', '2025-12-22 08:56:09'),
+(14, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: 2)', '::1', '2025-12-22 08:56:26'),
+(15, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายปฐวีกานต์ ศรีคราม', '::1', '2025-12-22 09:13:51'),
+(16, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายปฐวีกานต์ ศรีคราม', '::1', '2025-12-22 09:13:57'),
+(17, 1, 'Add Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: )', '::1', '2025-12-22 09:15:33'),
+(18, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: )', '::1', '2025-12-22 09:16:23');
 
 -- --------------------------------------------------------
 
@@ -205,21 +245,49 @@ INSERT INTO `system_logs` (`id`, `user_id`, `action`, `description`, `ip_address
 
 CREATE TABLE `users` (
   `id` int(11) NOT NULL,
-  `username` varchar(50) NOT NULL,
-  `password` varchar(255) NOT NULL,
-  `full_name` varchar(100) NOT NULL,
-  `role` enum('admin','staff','volunteer') NOT NULL DEFAULT 'staff',
-  `last_login` datetime DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+  `username` varchar(50) NOT NULL COMMENT 'ชื่อผู้ใช้',
+  `password` varchar(255) NOT NULL COMMENT 'รหัสผ่าน (Hashed)',
+  `full_name` varchar(100) NOT NULL COMMENT 'ชื่อ-นามสกุล',
+  `role` enum('admin','staff','volunteer') NOT NULL DEFAULT 'staff' COMMENT 'สิทธิ์การใช้งาน',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `last_login` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Dumping data for table `users`
 --
 
-INSERT INTO `users` (`id`, `username`, `password`, `full_name`, `role`, `last_login`, `created_at`) VALUES
-(1, 'admin', '$2a$12$zk8PKOASddu96PjkItPoFu9JyLOZMeoC4gg4.BoVElSsBKyKtcss2', 'Admin User', 'admin', NULL, '2025-12-21 05:50:15'),
-(2, 'max', '$2y$10$aXlj7pfOt3lhN4u.XE3PjulKjsKbhuiRRApHtjl7dqNrWW1Q2GIpu', 'ป', 'staff', NULL, '2025-12-21 06:20:38');
+INSERT INTO `users` (`id`, `username`, `password`, `full_name`, `role`, `created_at`, `last_login`) VALUES
+(1, 'admin', '$2a$12$zk8PKOASddu96PjkItPoFu9JyLOZMeoC4gg4.BoVElSsBKyKtcss2', 'ผู้ดูแลระบบสูงสุด', 'admin', '2025-12-22 07:12:37', NULL),
+(2, 'staff01', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'เจ้าหน้าที่ สมชาย ใจดี', 'staff', '2025-12-22 07:12:37', NULL),
+(3, 'staff02', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'เจ้าหน้าที่ สมหญิง รักงาน', 'staff', '2025-12-22 07:12:37', NULL),
+(4, 'volunteer01', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'อาสาสมัคร ก.', 'volunteer', '2025-12-22 07:12:37', NULL);
+
+-- --------------------------------------------------------
+
+--
+-- Stand-in structure for view `view_shelter_stats`
+-- (See below for the actual view)
+--
+CREATE TABLE `view_shelter_stats` (
+`shelter_id` int(11)
+,`shelter_name` varchar(200)
+,`capacity` int(11)
+,`incident_id` int(11)
+,`status` enum('open','full','closed')
+,`current_occupancy` bigint(21)
+,`vacancy` bigint(22)
+,`occupancy_rate` decimal(26,2)
+);
+
+-- --------------------------------------------------------
+
+--
+-- Structure for view `view_shelter_stats`
+--
+DROP TABLE IF EXISTS `view_shelter_stats`;
+
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `view_shelter_stats`  AS SELECT `s`.`id` AS `shelter_id`, `s`.`name` AS `shelter_name`, `s`.`capacity` AS `capacity`, `s`.`incident_id` AS `incident_id`, `s`.`status` AS `status`, count(`e`.`id`) AS `current_occupancy`, `s`.`capacity`- count(`e`.`id`) AS `vacancy`, round(count(`e`.`id`) / `s`.`capacity` * 100,2) AS `occupancy_rate` FROM (`shelters` `s` left join `evacuees` `e` on(`s`.`id` = `e`.`shelter_id` and `e`.`check_out_date` is null)) GROUP BY `s`.`id` ;
 
 --
 -- Indexes for dumped tables
@@ -230,47 +298,68 @@ INSERT INTO `users` (`id`, `username`, `password`, `full_name`, `role`, `last_lo
 --
 ALTER TABLE `caretakers`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_shelter` (`shelter_id`);
+  ADD KEY `idx_shelter_caretaker` (`shelter_id`);
+
+--
+-- Indexes for table `distribution_logs`
+--
+ALTER TABLE `distribution_logs`
+  ADD PRIMARY KEY (`id`);
 
 --
 -- Indexes for table `evacuees`
 --
 ALTER TABLE `evacuees`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `incident_id` (`incident_id`),
-  ADD KEY `shelter_id` (`shelter_id`);
+  ADD KEY `idx_id_card` (`id_card`),
+  ADD KEY `idx_names` (`first_name`,`last_name`),
+  ADD KEY `idx_shelter_active` (`shelter_id`,`check_out_date`),
+  ADD KEY `idx_incident` (`incident_id`);
+
+--
+-- Indexes for table `evacuee_needs`
+--
+ALTER TABLE `evacuee_needs`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `fk_needs_evacuee` (`evacuee_id`);
 
 --
 -- Indexes for table `incidents`
 --
 ALTER TABLE `incidents`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_type` (`type`),
+  ADD KEY `idx_status` (`status`);
 
 --
--- Indexes for table `settings`
+-- Indexes for table `inventory`
 --
-ALTER TABLE `settings`
-  ADD PRIMARY KEY (`setting_key`);
+ALTER TABLE `inventory`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `fk_inventory_shelter` (`shelter_id`);
+
+--
+-- Indexes for table `inventory_transactions`
+--
+ALTER TABLE `inventory_transactions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_inventory` (`inventory_id`);
 
 --
 -- Indexes for table `shelters`
 --
 ALTER TABLE `shelters`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_incident` (`incident_id`);
-
---
--- Indexes for table `shelter_coordinators`
---
-ALTER TABLE `shelter_coordinators`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `shelter_id` (`shelter_id`);
+  ADD KEY `idx_incident_id` (`incident_id`),
+  ADD KEY `idx_status` (`status`);
 
 --
 -- Indexes for table `system_logs`
 --
 ALTER TABLE `system_logs`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_user_action` (`user_id`,`action`),
+  ADD KEY `idx_created_at` (`created_at`);
 
 --
 -- Indexes for table `users`
@@ -287,53 +376,103 @@ ALTER TABLE `users`
 -- AUTO_INCREMENT for table `caretakers`
 --
 ALTER TABLE `caretakers`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+
+--
+-- AUTO_INCREMENT for table `distribution_logs`
+--
+ALTER TABLE `distribution_logs`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `evacuees`
 --
 ALTER TABLE `evacuees`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+
+--
+-- AUTO_INCREMENT for table `evacuee_needs`
+--
+ALTER TABLE `evacuee_needs`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `incidents`
 --
 ALTER TABLE `incidents`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+
+--
+-- AUTO_INCREMENT for table `inventory`
+--
+ALTER TABLE `inventory`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `inventory_transactions`
+--
+ALTER TABLE `inventory_transactions`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `shelters`
 --
 ALTER TABLE `shelters`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=50;
-
---
--- AUTO_INCREMENT for table `shelter_coordinators`
---
-ALTER TABLE `shelter_coordinators`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT for table `system_logs`
 --
 ALTER TABLE `system_logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=19;
 
 --
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- Constraints for dumped tables
 --
 
 --
--- Constraints for table `shelter_coordinators`
+-- Constraints for table `caretakers`
 --
-ALTER TABLE `shelter_coordinators`
-  ADD CONSTRAINT `shelter_coordinators_ibfk_1` FOREIGN KEY (`shelter_id`) REFERENCES `shelters` (`id`) ON DELETE CASCADE;
+ALTER TABLE `caretakers`
+  ADD CONSTRAINT `fk_caretakers_shelter` FOREIGN KEY (`shelter_id`) REFERENCES `shelters` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `evacuees`
+--
+ALTER TABLE `evacuees`
+  ADD CONSTRAINT `fk_evacuees_incident` FOREIGN KEY (`incident_id`) REFERENCES `incidents` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_evacuees_shelter` FOREIGN KEY (`shelter_id`) REFERENCES `shelters` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `evacuee_needs`
+--
+ALTER TABLE `evacuee_needs`
+  ADD CONSTRAINT `evacuee_needs_ibfk_1` FOREIGN KEY (`evacuee_id`) REFERENCES `evacuees` (`id`),
+  ADD CONSTRAINT `fk_needs_evacuee` FOREIGN KEY (`evacuee_id`) REFERENCES `evacuees` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `inventory`
+--
+ALTER TABLE `inventory`
+  ADD CONSTRAINT `fk_inventory_shelter` FOREIGN KEY (`shelter_id`) REFERENCES `shelters` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `inventory_transactions`
+--
+ALTER TABLE `inventory_transactions`
+  ADD CONSTRAINT `fk_trans_inventory` FOREIGN KEY (`inventory_id`) REFERENCES `inventory` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `shelters`
+--
+ALTER TABLE `shelters`
+  ADD CONSTRAINT `fk_shelters_incident` FOREIGN KEY (`incident_id`) REFERENCES `incidents` (`id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

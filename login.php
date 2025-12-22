@@ -1,6 +1,8 @@
 <?php
 // login.php
-session_start();
+require_once 'includes/functions.php'; // เรียกใช้ฟังก์ชันเพื่อ Gen Token
+if (session_status() == PHP_SESSION_NONE) { session_start(); }
+
 // ตรวจสอบว่าถ้า Login อยู่แล้วให้เด้งไปหน้า Dashboard เลย
 if (isset($_SESSION['user_id'])) {
     header("Location: index.php");
@@ -100,6 +102,9 @@ if (isset($_SESSION['user_id'])) {
                     <?php endif; ?>
 
                     <form action="login_db.php" method="POST">
+                        <!-- Security: CSRF Token -->
+                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+
                         <div class="mb-3">
                             <label class="form-label text-secondary fw-bold small">ชื่อผู้ใช้งาน</label>
                             <div class="input-group">

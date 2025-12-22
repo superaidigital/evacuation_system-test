@@ -23,7 +23,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'delete' && isset($_GET['id']))
         
         logActivity($pdo, $_SESSION['user_id'], 'Delete Caretaker', "ลบผู้ดูแล ID: $id");
         $_SESSION['swal_success'] = "ลบข้อมูลเรียบร้อยแล้ว";
-    } catch (PDOException $e) {
+    } catch (\PDOException $e) {
         error_log($e->getMessage());
         $_SESSION['swal_error'] = "เกิดข้อผิดพลาดในการลบข้อมูล";
     }
@@ -49,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action_type'])) {
     } else {
         try {
             if ($mode == 'add') {
-                $sql = "INSERT INTO caretakers (prefix, first_name, last_name, position, phone, shelter_id) VALUES (?, ?, ?, ?, ?, ?)";
+                $sql = "INSERT INTO caretakers (prefix, first_name, last_name, position, phone, shelter_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())";
                 $stmt = $pdo->prepare($sql);
                 $stmt->execute([$prefix, $first_name, $last_name, $position, $phone, $shelter_id]);
                 
@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action_type'])) {
                 logActivity($pdo, $_SESSION['user_id'], 'Edit Caretaker', "แก้ไขผู้ดูแล: $first_name $last_name");
                 $_SESSION['swal_success'] = "แก้ไขข้อมูลเรียบร้อยแล้ว";
             }
-        } catch (PDOException $e) {
+        } catch (\PDOException $e) {
             error_log($e->getMessage());
             $_SESSION['swal_error'] = "Database Error: " . $e->getMessage();
         }
@@ -78,32 +78,45 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action_type'])) {
 // ------------------------------------------------------------------
 
 // ดึงรายชื่อศูนย์พักพิง (สำหรับ Dropdown ใน Modal)
-$sql_shelters = "SELECT s.id, s.name, i.name as incident_name, i.status 
-                 FROM shelters s 
-                 LEFT JOIN incidents i ON s.incident_id = i.id 
-                 ORDER BY i.status ASC, s.name ASC";
-$shelters = $pdo->query($sql_shelters)->fetchAll();
+try {
+    $sql_shelters = "SELECT s.id, s.name, i.name as incident_name, i.status 
+                     FROM shelters s 
+                     LEFT JOIN incidents i ON s.incident_id = i.id 
+                     ORDER BY i.status ASC, s.name ASC";
+    $shelters = $pdo->query($sql_shelters)->fetchAll();
+} catch (\PDOException $e) {
+    $shelters = []; // กัน Error
+}
 
 // รับค่าค้นหา
 $keyword = isset($_GET['keyword']) ? trim($_GET['keyword']) : '';
 
 // Query รายชื่อผู้ดูแล
-$sql = "SELECT c.*, s.name as shelter_name, i.name as incident_name, i.status as incident_status
-        FROM caretakers c
-        LEFT JOIN shelters s ON c.shelter_id = s.id
-        LEFT JOIN incidents i ON s.incident_id = i.id
-        WHERE c.first_name LIKE ? OR c.last_name LIKE ? OR c.phone LIKE ? OR s.name LIKE ?
-        ORDER BY i.status ASC, s.name ASC, c.first_name ASC";
+$caretakers = [];
+try {
+    $sql = "SELECT c.*, s.name as shelter_name, i.name as incident_name, i.status as incident_status
+            FROM caretakers c
+            LEFT JOIN shelters s ON c.shelter_id = s.id
+            LEFT JOIN incidents i ON s.incident_id = i.id
+            WHERE (c.first_name LIKE ? OR c.last_name LIKE ? OR c.phone LIKE ? OR s.name LIKE ?)
+            ORDER BY c.first_name ASC";
 
-$stmt = $pdo->prepare($sql);
-$params = ["%$keyword%", "%$keyword%", "%$keyword%", "%$keyword%"];
-$stmt->execute($params);
-$caretakers = $stmt->fetchAll();
+    $stmt = $pdo->prepare($sql);
+    $params = ["%$keyword%", "%$keyword%", "%$keyword%", "%$keyword%"];
+    $stmt->execute($params);
+    $caretakers = $stmt->fetchAll();
+} catch (\PDOException $e) {
+    // ใช้ \PDOException เพื่อให้มั่นใจว่าจับ Error ได้จริง
+    error_log("Caretaker Query Error: " . $e->getMessage());
+    $db_error = "เกิดข้อผิดพลาดฐานข้อมูล (Table Structure Mismatch). <a href='fix_db_caretakers.php' class='btn btn-warning btn-sm'>คลิกที่นี่เพื่อซ่อมแซมฐานข้อมูล</a>";
+}
 ?>
 
 <!DOCTYPE html>
 <html lang="th">
 <head>
+    <meta charset="UTF-8">
+    <title>ทำเนียบผู้ดูแลศูนย์</title>
     <style>
         .avatar-initial {
             width: 40px;
@@ -158,6 +171,14 @@ $caretakers = $stmt->fetchAll();
             <i class="fas fa-user-plus me-2"></i>เพิ่มผู้ดูแล
         </button>
     </div>
+
+    <!-- DB Error Notification -->
+    <?php if(isset($db_error)): ?>
+        <div class="alert alert-danger shadow-sm border-danger">
+            <h4><i class="fas fa-tools"></i> ระบบตรวจพบปัญหาฐานข้อมูล</h4>
+            <p class="mb-2"><?php echo $db_error; ?></p>
+        </div>
+    <?php endif; ?>
 
     <!-- Search Box -->
     <div class="card border-0 shadow-sm mb-4">
@@ -290,7 +311,6 @@ $caretakers = $stmt->fetchAll();
 
 <!-- ========================================== -->
 <!-- MODAL POPUP: เพิ่ม/แก้ไข ข้อมูล -->
-<!-- ย้ายมาไว้นอกสุด (หลัง footer) เพื่อแก้ปัญหา z-index -->
 <!-- ========================================== -->
 <div class="modal fade" id="caretakerModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
     <div class="modal-dialog modal-dialog-centered modal-lg">
@@ -342,7 +362,7 @@ $caretakers = $stmt->fetchAll();
                             <?php foreach ($shelters as $s): ?>
                                 <option value="<?php echo $s['id']; ?>">
                                     <?php echo htmlspecialchars($s['name']); ?> 
-                                    (<?php echo $s['status'] == 'active' ? '🟢 '.$s['incident_name'] : '🔴 '.$s['incident_name']; ?>)
+                                    (<?php echo ($s['status'] ?? 'open') == 'active' ? '🟢 Active' : '⚪ '.$s['incident_name']; ?>)
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -363,13 +383,11 @@ $caretakers = $stmt->fetchAll();
 <script>
     // เปิด Modal โหมดเพิ่ม
     function openAddModal() {
-        // ใช้ setTimeout เล็กน้อยเพื่อให้แน่ใจว่า DOM พร้อม
         setTimeout(() => {
             const modalEl = document.getElementById('caretakerModal');
             if (modalEl) {
                 const modal = new bootstrap.Modal(modalEl);
                 
-                // Reset ค่า Default
                 document.getElementById('caretakerForm').reset();
                 document.getElementById('action_type').value = 'add';
                 document.getElementById('caretaker_id').value = '';
@@ -378,8 +396,6 @@ $caretakers = $stmt->fetchAll();
                 document.getElementById('btnSave').innerHTML = '<i class="fas fa-save me-1"></i> บันทึกข้อมูล';
                 
                 modal.show();
-            } else {
-                console.error('Modal element not found!');
             }
         }, 100);
     }
@@ -391,7 +407,6 @@ $caretakers = $stmt->fetchAll();
             if (modalEl) {
                 const modal = new bootstrap.Modal(modalEl);
                 
-                // ใส่ข้อมูลลงในฟอร์ม
                 document.getElementById('action_type').value = 'edit';
                 document.getElementById('caretaker_id').value = data.id;
                 document.getElementById('prefix').value = data.prefix;
