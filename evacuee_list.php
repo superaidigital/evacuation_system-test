@@ -1,7 +1,7 @@
 <?php
 // evacuee_list.php
 require_once 'config/db.php';
-require_once 'includes/functions.php'; // เรียกใช้ thaiDate()
+require_once 'includes/functions.php'; // เรียกใช้ thaiDate() และ renderPagination()
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
 
 if (!isset($_SESSION['user_id'])) {
@@ -15,7 +15,12 @@ if (!$shelter_id) {
     die("ไม่ระบุรหัสศูนย์พักพิง");
 }
 
-// 1. ดึงข้อมูลศูนย์พักพิง และ เหตุการณ์
+// --- Pagination Setup ---
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$limit = 20; // จำนวนรายการต่อหน้า
+$offset = ($page - 1) * $limit;
+
+// 1. ดึงข้อมูลศูนย์พักพิง
 $sql_shelter = "SELECT s.*, i.name as incident_name, i.status as incident_status 
                 FROM shelters s 
                 JOIN incidents i ON s.incident_id = i.id 
@@ -28,33 +33,34 @@ if (!$shelter) {
     die("ไม่พบข้อมูลศูนย์พักพิง");
 }
 
-// 2. ดึงรายชื่อผู้ประสบภัย
-$sql_list = "SELECT * FROM evacuees WHERE shelter_id = ? ORDER BY check_in_date DESC, id DESC";
+// 2. ดึงจำนวนผู้ประสบภัยทั้งหมด (สำหรับ Pagination)
+$sql_count = "SELECT COUNT(*) FROM evacuees WHERE shelter_id = ?";
+$stmt_count = $pdo->prepare($sql_count);
+$stmt_count->execute([$shelter_id]);
+$total_records = $stmt_count->fetchColumn();
+$total_pages = ceil($total_records / $limit);
+
+// 3. ดึงรายชื่อผู้ประสบภัย (พร้อม LIMIT)
+// FIX: เปลี่ยนจากการใช้ ? ผสมกับ Named Parameter เป็น Named Parameter ทั้งหมด
+$sql_list = "SELECT * FROM evacuees WHERE shelter_id = :shelter_id ORDER BY check_in_date DESC, id DESC LIMIT :limit OFFSET :offset";
 $stmt = $pdo->prepare($sql_list);
-$stmt->execute([$shelter_id]);
+$stmt->bindValue(':shelter_id', $shelter_id);
+$stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+$stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+$stmt->execute();
 $evacuees = $stmt->fetchAll();
 
-// 3. คำนวณสถิติเบื้องต้นของศูนย์นี้
-$stats = [
-    'total' => 0,
-    'staying' => 0,
-    'male' => 0,
-    'female' => 0,
-    'vulnerable' => 0
-];
-
-foreach ($evacuees as $row) {
-    $stats['total']++;
-    if ($row['check_out_date'] == NULL) {
-        $stats['staying']++;
-        if ($row['gender'] == 'male') $stats['male']++;
-        else if ($row['gender'] == 'female') $stats['female']++;
-        
-        if ($row['age'] < 15 || $row['age'] >= 60 || !empty($row['health_condition'])) {
-            $stats['vulnerable']++;
-        }
-    }
-}
+// 4. คำนวณสถิติเบื้องต้น (ต้องนับจากทั้งหมด ไม่ใช่แค่หน้าปัจจุบัน จึงต้อง Query แยก หรือใช้ View)
+// เพื่อประสิทธิภาพ เราจะ Query Count แยกตามเงื่อนไข
+$stmt_stats = $pdo->prepare("SELECT 
+    COUNT(*) as total,
+    SUM(CASE WHEN check_out_date IS NULL THEN 1 ELSE 0 END) as staying,
+    SUM(CASE WHEN check_out_date IS NULL AND gender = 'male' THEN 1 ELSE 0 END) as male,
+    SUM(CASE WHEN check_out_date IS NULL AND gender = 'female' THEN 1 ELSE 0 END) as female,
+    SUM(CASE WHEN check_out_date IS NULL AND (age < 15 OR age >= 60 OR health_condition != '' AND health_condition IS NOT NULL) THEN 1 ELSE 0 END) as vulnerable
+    FROM evacuees WHERE shelter_id = ?");
+$stmt_stats->execute([$shelter_id]);
+$stats = $stmt_stats->fetch();
 ?>
 
 <!DOCTYPE html>
@@ -171,8 +177,10 @@ foreach ($evacuees as $row) {
         <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
             <h6 class="mb-0 fw-bold text-dark"><i class="fas fa-list me-2"></i> รายชื่อผู้พักพิง (Roster)</h6>
             
-            <!-- Search Box (Client-side simple search can be added here via JS table filter) -->
-            <input type="text" id="tableSearch" class="form-control form-control-sm w-auto" placeholder="ค้นหาชื่อ..." onkeyup="filterTable()">
+            <div class="d-flex align-items-center">
+                <small class="text-muted me-2">แสดง <?php echo $limit; ?> รายการ/หน้า</small>
+                <input type="text" id="tableSearch" class="form-control form-control-sm w-auto" placeholder="ค้นหาในหน้านี้..." onkeyup="filterTable()">
+            </div>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
@@ -261,6 +269,15 @@ foreach ($evacuees as $row) {
                     </tbody>
                 </table>
             </div>
+
+            <!-- Pagination -->
+            <div class="p-3 bg-light border-top">
+                <?php echo renderPagination($page, $total_pages, ['shelter_id' => $shelter_id]); ?>
+                <div class="text-center text-muted small mt-2">
+                    แสดง <?php echo count($evacuees); ?> จากทั้งหมด <?php echo number_format($total_records); ?> รายการ
+                </div>
+            </div>
+
         </div>
     </div>
 </div>
@@ -268,7 +285,7 @@ foreach ($evacuees as $row) {
 <?php include 'includes/footer.php'; ?>
 
 <script>
-    // Client-side Table Filter
+    // Client-side Table Filter (ค้นหาเฉพาะหน้าปัจจุบัน)
     function filterTable() {
         var input, filter, table, tr, td, i, txtValue;
         input = document.getElementById("tableSearch");

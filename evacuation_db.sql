@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Dec 22, 2025 at 10:37 AM
+-- Generation Time: Dec 22, 2025 at 12:28 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.1.25
 
@@ -98,7 +98,7 @@ INSERT INTO `evacuees` (`id`, `incident_id`, `shelter_id`, `stay_type`, `stay_de
 (1, 1, 1, 'shelter', NULL, '1330000111222', NULL, 'นาย', 'สมศักดิ์', 'รักชาติ', '081-111-2222', 'male', 45, 'ความดันโลหิตสูง', 2, '2025-12-22 14:12:37', NULL, NULL, '2025-12-22 14:12:37'),
 (2, 1, 1, 'shelter', NULL, '1330000333444', NULL, 'นาง', 'สมศรี', 'มีสุข', '089-333-4444', 'female', 42, '-', 2, '2025-12-22 14:12:37', NULL, NULL, '2025-12-22 14:12:37'),
 (3, 1, 1, 'shelter', NULL, '1330000555666', NULL, 'ด.ช.', 'เก่ง', 'รักชาติ', NULL, 'male', 10, 'แพ้อาหารทะเล', 2, '2025-12-22 14:12:37', NULL, NULL, '2025-12-22 14:12:37'),
-(4, 1, NULL, 'outside', 'บ้านญาติ', '1332000000946', '', '', 'วิชัย', 'ใจดี', '090-555-6666', 'male', 60, 'เบาหวาน, เดินไม่สะดวก', 3, '2025-12-22 14:12:37', NULL, '2025-12-22 16:16:23', '2025-12-22 14:12:37'),
+(4, 1, 2, 'shelter', 'บ้านญาติ', '1332000000946', '', '', 'วิชัย', 'ใจดี', '090-555-6666', 'male', 60, 'เบาหวาน, เดินไม่สะดวก', 3, '2025-12-22 14:12:37', NULL, '2025-12-22 16:55:16', '2025-12-22 14:12:37'),
 (5, 3, NULL, 'outside', 'บ้านญาติ', '1332000000946', '', 'นาย', 'วิชัย', 'ใจดี', '090-555-6666', 'male', 60, '', 1, '2025-12-22 16:15:33', NULL, NULL, '2025-12-22 16:15:33');
 
 -- --------------------------------------------------------
@@ -235,7 +235,22 @@ INSERT INTO `system_logs` (`id`, `user_id`, `action`, `description`, `ip_address
 (15, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายปฐวีกานต์ ศรีคราม', '::1', '2025-12-22 09:13:51'),
 (16, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายปฐวีกานต์ ศรีคราม', '::1', '2025-12-22 09:13:57'),
 (17, 1, 'Add Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: )', '::1', '2025-12-22 09:15:33'),
-(18, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: )', '::1', '2025-12-22 09:16:23');
+(18, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (Shelter ID: )', '::1', '2025-12-22 09:16:23'),
+(19, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (ID: 4)', '::1', '2025-12-22 09:54:55'),
+(20, 1, 'Edit Evacuee', 'ชื่อ: วิชัย ใจดี (ID: 4)', '::1', '2025-12-22 09:55:16'),
+(21, 1, 'Edit Incident', 'แก้ไขภารกิจ ID: 1', '::1', '2025-12-22 10:00:07'),
+(22, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายปฐวีกานต์ ศรีคราม', '::1', '2025-12-22 10:00:30'),
+(23, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-22 10:03:32'),
+(24, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-22 10:08:41'),
+(25, 1, 'Edit Incident', 'แก้ไขภารกิจ ID: 3', '::1', '2025-12-22 10:10:19'),
+(26, 1, 'Edit Incident', 'แก้ไขภารกิจ ID: 1', '::1', '2025-12-22 10:10:22'),
+(27, 1, 'Edit Incident', 'แก้ไขภารกิจ ID: 1', '::1', '2025-12-22 10:10:31'),
+(28, 1, 'Edit Incident', 'แก้ไขภารกิจ ID: 1', '::1', '2025-12-22 10:10:36'),
+(29, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายปฐวีกานต์ ศรีคราม', '::1', '2025-12-22 10:29:36'),
+(30, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายปฐวีกานต์ ศรีคราม', '::1', '2025-12-22 10:53:28'),
+(31, 1, 'Edit User', 'แก้ไขผู้ใช้งาน: staff01', '::1', '2025-12-22 11:22:04'),
+(32, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-22 11:22:07'),
+(33, 2, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-22 11:22:11');
 
 -- --------------------------------------------------------
 
@@ -249,6 +264,7 @@ CREATE TABLE `users` (
   `password` varchar(255) NOT NULL COMMENT 'รหัสผ่าน (Hashed)',
   `full_name` varchar(100) NOT NULL COMMENT 'ชื่อ-นามสกุล',
   `role` enum('admin','staff','volunteer') NOT NULL DEFAULT 'staff' COMMENT 'สิทธิ์การใช้งาน',
+  `shelter_id` int(11) DEFAULT NULL COMMENT 'สังกัดศูนย์พักพิง',
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `last_login` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -257,11 +273,11 @@ CREATE TABLE `users` (
 -- Dumping data for table `users`
 --
 
-INSERT INTO `users` (`id`, `username`, `password`, `full_name`, `role`, `created_at`, `last_login`) VALUES
-(1, 'admin', '$2a$12$zk8PKOASddu96PjkItPoFu9JyLOZMeoC4gg4.BoVElSsBKyKtcss2', 'ผู้ดูแลระบบสูงสุด', 'admin', '2025-12-22 07:12:37', NULL),
-(2, 'staff01', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'เจ้าหน้าที่ สมชาย ใจดี', 'staff', '2025-12-22 07:12:37', NULL),
-(3, 'staff02', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'เจ้าหน้าที่ สมหญิง รักงาน', 'staff', '2025-12-22 07:12:37', NULL),
-(4, 'volunteer01', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'อาสาสมัคร ก.', 'volunteer', '2025-12-22 07:12:37', NULL);
+INSERT INTO `users` (`id`, `username`, `password`, `full_name`, `role`, `shelter_id`, `created_at`, `last_login`) VALUES
+(1, 'admin', '$2a$12$zk8PKOASddu96PjkItPoFu9JyLOZMeoC4gg4.BoVElSsBKyKtcss2', 'ผู้ดูแลระบบสูงสุด', 'admin', NULL, '2025-12-22 07:12:37', NULL),
+(2, 'staff01', '$2y$10$cOmaH/AjDmYBy1O4H/OMx.W/EUCtipk7jFSyaprR7C93pYj.X1dfO', 'เจ้าหน้าที่ สมชาย ใจดี', 'staff', 1, '2025-12-22 07:12:37', NULL),
+(3, 'staff02', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'เจ้าหน้าที่ สมหญิง รักงาน', 'staff', NULL, '2025-12-22 07:12:37', NULL),
+(4, 'volunteer01', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'อาสาสมัคร ก.', 'volunteer', NULL, '2025-12-22 07:12:37', NULL);
 
 -- --------------------------------------------------------
 
@@ -424,7 +440,7 @@ ALTER TABLE `shelters`
 -- AUTO_INCREMENT for table `system_logs`
 --
 ALTER TABLE `system_logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=19;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=34;
 
 --
 -- AUTO_INCREMENT for table `users`

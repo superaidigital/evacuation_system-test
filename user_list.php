@@ -1,7 +1,7 @@
 <?php
 // user_list.php
 require_once 'config/db.php';
-// เรียกใช้ header เพื่อเริ่ม Session
+require_once 'includes/functions.php'; // renderPagination
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
 
 // 1. Security Check: เฉพาะ Admin เท่านั้น
@@ -13,18 +13,15 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 // ------------------------------------------------------------------
 // 2. Logic: Handle Actions (Add / Edit / Delete)
 // ------------------------------------------------------------------
-
-// 2.1 Handle Delete (GET Request)
 if (isset($_GET['action']) && $_GET['action'] == 'delete' && isset($_GET['id'])) {
     $id = $_GET['id'];
-    
-    // ป้องกันการลบตัวเอง
     if ($id == $_SESSION['user_id']) {
         $_SESSION['swal_error'] = "ไม่สามารถลบบัญชีที่กำลังใช้งานอยู่ได้";
     } else {
         try {
             $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
             $stmt->execute([$id]);
+            logActivity($pdo, $_SESSION['user_id'], 'Delete User', "ลบผู้ใช้งาน ID: $id");
             $_SESSION['swal_success'] = "ลบผู้ใช้งานเรียบร้อยแล้ว";
         } catch (PDOException $e) {
             $_SESSION['swal_error'] = "เกิดข้อผิดพลาด: " . $e->getMessage();
@@ -34,67 +31,96 @@ if (isset($_GET['action']) && $_GET['action'] == 'delete' && isset($_GET['id']))
     exit();
 }
 
-// 2.2 Handle Save (POST Request)
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action_type'])) {
-    
     $mode = $_POST['action_type'];
     $id = $_POST['user_id'] ?? '';
-    
     $username = trim($_POST['username']);
     $full_name = trim($_POST['full_name']);
     $role = $_POST['role'];
     $password = $_POST['password'];
+    
+    // รับค่า shelter_id (ถ้าไม่ใช่ staff/volunteer จะเป็น null หรือค่าว่าง)
+    $shelter_id = !empty($_POST['shelter_id']) ? $_POST['shelter_id'] : null;
+
+    // ถ้า Role เป็น admin ให้เคลียร์ shelter_id เป็น NULL เสมอ
+    if ($role === 'admin') {
+        $shelter_id = null;
+    }
 
     try {
         if ($mode == 'add') {
-            // Check Duplicate
             $check = $pdo->prepare("SELECT id FROM users WHERE username = ?");
             $check->execute([$username]);
             if ($check->rowCount() > 0) {
                 $_SESSION['swal_error'] = "ชื่อผู้ใช้งานนี้มีอยู่ในระบบแล้ว";
             } else {
-                // Hash Password
                 $password_hash = password_hash($password, PASSWORD_DEFAULT);
-                
-                $sql = "INSERT INTO users (username, password, full_name, role, created_at) VALUES (?, ?, ?, ?, NOW())";
+                // เพิ่ม shelter_id ลงใน INSERT
+                $sql = "INSERT INTO users (username, password, full_name, role, shelter_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())";
                 $stmt = $pdo->prepare($sql);
-                $stmt->execute([$username, $password_hash, $full_name, $role]);
+                $stmt->execute([$username, $password_hash, $full_name, $role, $shelter_id]);
                 
+                logActivity($pdo, $_SESSION['user_id'], 'Add User', "เพิ่มผู้ใช้งาน: $username ($role)");
                 $_SESSION['swal_success'] = "เพิ่มผู้ใช้งานเรียบร้อยแล้ว";
             }
-
         } else if ($mode == 'edit') {
-            // Update Info
             if (!empty($password)) {
-                // เปลี่ยนรหัสผ่านด้วย
                 $password_hash = password_hash($password, PASSWORD_DEFAULT);
-                $sql = "UPDATE users SET full_name = ?, role = ?, password = ? WHERE id = ?";
+                // เพิ่ม shelter_id ลงใน UPDATE
+                $sql = "UPDATE users SET full_name = ?, role = ?, shelter_id = ?, password = ? WHERE id = ?";
                 $stmt = $pdo->prepare($sql);
-                $stmt->execute([$full_name, $role, $password_hash, $id]);
+                $stmt->execute([$full_name, $role, $shelter_id, $password_hash, $id]);
             } else {
-                // ไม่เปลี่ยนรหัสผ่าน
-                $sql = "UPDATE users SET full_name = ?, role = ? WHERE id = ?";
+                // เพิ่ม shelter_id ลงใน UPDATE (กรณีไม่เปลี่ยนรหัส)
+                $sql = "UPDATE users SET full_name = ?, role = ?, shelter_id = ? WHERE id = ?";
                 $stmt = $pdo->prepare($sql);
-                $stmt->execute([$full_name, $role, $id]);
+                $stmt->execute([$full_name, $role, $shelter_id, $id]);
             }
+            logActivity($pdo, $_SESSION['user_id'], 'Edit User', "แก้ไขผู้ใช้งาน: $username");
             $_SESSION['swal_success'] = "แก้ไขข้อมูลผู้ใช้งานเรียบร้อยแล้ว";
         }
-
     } catch (PDOException $e) {
         $_SESSION['swal_error'] = "Error: " . $e->getMessage();
     }
-
     header("Location: user_list.php");
     exit();
 }
 
 // ------------------------------------------------------------------
-// 3. Data Fetching
+// 3. Data Fetching & Pagination
 // ------------------------------------------------------------------
 
-// ดึงข้อมูล Users ทั้งหมด
-$stmt = $pdo->query("SELECT * FROM users ORDER BY role ASC, username ASC");
-$users = $stmt->fetchAll();
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$limit = 20;
+$offset = ($page - 1) * $limit;
+
+// Fetch Shelters for Dropdown
+try {
+    $shelters = $pdo->query("SELECT id, name FROM shelters ORDER BY name ASC")->fetchAll();
+} catch (PDOException $e) {
+    $shelters = []; // กรณี table shelters มีปัญหา หรือยังไม่มีข้อมูล
+}
+
+// Count Users
+$total_records = $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
+$total_pages = ceil($total_records / $limit);
+
+// Fetch Users with Shelter Name
+try {
+    // ใช้ LEFT JOIN เพื่อดึงชื่อศูนย์พักพิง ถ้า shelter_id ตรงกัน
+    $sql = "SELECT u.*, s.name as shelter_name 
+            FROM users u
+            LEFT JOIN shelters s ON u.shelter_id = s.id
+            ORDER BY u.role ASC, u.username ASC 
+            LIMIT $limit OFFSET $offset";
+    $stmt = $pdo->query($sql);
+    $users = $stmt->fetchAll();
+} catch (PDOException $e) {
+    // Fallback กรณีไม่มีคอลัมน์ shelter_id ใน users table
+    $sql = "SELECT *, NULL as shelter_name FROM users ORDER BY role ASC LIMIT $limit OFFSET $offset";
+    $stmt = $pdo->query($sql);
+    $users = $stmt->fetchAll();
+}
 ?>
 
 <!DOCTYPE html>
@@ -187,7 +213,8 @@ $users = $stmt->fetchAll();
                             <th class="ps-4" style="width: 50px;">#</th>
                             <th>ผู้ใช้งาน (User)</th>
                             <th>ชื่อ-นามสกุล</th>
-                            <th>สิทธิ์การใช้งาน (Role)</th>
+                            <th>สิทธิ์ (Role)</th>
+                            <th>สังกัด (Shelter)</th>
                             <th>เข้าใช้งานล่าสุด</th>
                             <th class="text-end pe-4">เครื่องมือ</th>
                         </tr>
@@ -214,6 +241,15 @@ $users = $stmt->fetchAll();
                                     <?php echo ucfirst($row['role']); ?>
                                 </span>
                             </td>
+                            <td>
+                                <?php if (!empty($row['shelter_name'])): ?>
+                                    <span class="text-primary fw-bold small"><i class="fas fa-home me-1"></i> <?php echo htmlspecialchars($row['shelter_name']); ?></span>
+                                <?php elseif ($row['role'] == 'admin'): ?>
+                                    <span class="text-muted small">- ส่วนกลาง -</span>
+                                <?php else: ?>
+                                    <span class="text-muted small fst-italic text-danger">ยังไม่ระบุ</span>
+                                <?php endif; ?>
+                            </td>
                             <td class="text-muted small">
                                 <?php echo $row['last_login'] ? date('d/m/Y H:i', strtotime($row['last_login'])) : '-'; ?>
                             </td>
@@ -238,6 +274,12 @@ $users = $stmt->fetchAll();
                     </tbody>
                 </table>
             </div>
+            
+            <!-- Pagination -->
+            <div class="p-3 bg-light border-top">
+                <?php echo renderPagination($page, $total_pages); ?>
+            </div>
+            
         </div>
     </div>
 </div>
@@ -273,11 +315,23 @@ $users = $stmt->fetchAll();
 
                     <div class="mb-3">
                         <label class="form-label fw-bold">สิทธิ์การใช้งาน (Role) <span class="text-danger">*</span></label>
-                        <select name="role" id="role" class="form-select" required>
+                        <select name="role" id="role" class="form-select" required onchange="toggleShelterSelect()">
                             <option value="staff">เจ้าหน้าที่ (Staff)</option>
                             <option value="admin">ผู้ดูแลระบบ (Admin)</option>
                             <option value="volunteer">อาสาสมัคร (Volunteer)</option>
                         </select>
+                    </div>
+
+                    <!-- Shelter Selection (Hidden for Admin) -->
+                    <div class="mb-3" id="shelterSelectGroup">
+                        <label class="form-label fw-bold">ประจำศูนย์พักพิง <span class="text-danger" id="shelterReq">*</span></label>
+                        <select name="shelter_id" id="shelter_id" class="form-select">
+                            <option value="">-- เลือกศูนย์พักพิง --</option>
+                            <?php foreach ($shelters as $s): ?>
+                                <option value="<?php echo $s['id']; ?>"><?php echo htmlspecialchars($s['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <div class="form-text text-muted">จำเป็นสำหรับ Staff และ Volunteer เพื่อระบุสถานที่ปฏิบัติงาน</div>
                     </div>
 
                     <hr class="my-3">
@@ -301,9 +355,24 @@ $users = $stmt->fetchAll();
 
 <!-- Scripts -->
 <script>
+    // Toggle Shelter Dropdown Visibility
+    function toggleShelterSelect() {
+        const role = document.getElementById('role').value;
+        const shelterGroup = document.getElementById('shelterSelectGroup');
+        const shelterSelect = document.getElementById('shelter_id');
+        
+        if (role === 'admin') {
+            shelterGroup.classList.add('d-none'); // ซ่อนถ้าเป็น Admin
+            shelterSelect.value = ""; // เคลียร์ค่า
+            shelterSelect.required = false;
+        } else {
+            shelterGroup.classList.remove('d-none'); // แสดงถ้าเป็น Staff/Volunteer
+            // shelterSelect.required = true; // บังคับเลือก (Optional: ถ้าต้องการบังคับให้ uncomment)
+        }
+    }
+
     // เปิด Modal (Add/Edit)
     function openModal(mode, data = null) {
-        // ใช้ Timeout เล็กน้อยเพื่อความชัวร์
         setTimeout(() => {
             const modalEl = document.getElementById('userModal');
             if (modalEl) {
@@ -316,6 +385,8 @@ $users = $stmt->fetchAll();
                 
                 const usernameInput = document.getElementById('username');
                 const passwordInput = document.getElementById('password');
+                const roleSelect = document.getElementById('role');
+                const shelterSelect = document.getElementById('shelter_id');
                 
                 if (mode === 'add') {
                     // โหมดเพิ่ม
@@ -331,6 +402,10 @@ $users = $stmt->fetchAll();
                     passwordInput.placeholder = 'กำหนดรหัสผ่าน';
                     document.getElementById('passwordHint').innerText = '';
                     
+                    // Default Role & Shelter
+                    roleSelect.value = 'staff';
+                    toggleShelterSelect(); // เรียกเพื่อแสดง Dropdown
+                    
                 } else if (mode === 'edit' && data) {
                     // โหมดแก้ไข
                     document.getElementById('modalTitle').innerHTML = '<i class="fas fa-user-edit me-2"></i> แก้ไขข้อมูลผู้ใช้งาน';
@@ -340,7 +415,14 @@ $users = $stmt->fetchAll();
                     document.getElementById('user_id').value = data.id;
                     usernameInput.value = data.username;
                     document.getElementById('full_name').value = data.full_name;
-                    document.getElementById('role').value = data.role;
+                    roleSelect.value = data.role;
+                    
+                    // Fill Shelter Data (ถ้ามี)
+                    if (data.shelter_id) {
+                        shelterSelect.value = data.shelter_id;
+                    } else {
+                        shelterSelect.value = "";
+                    }
                     
                     // Lock Username
                     usernameInput.readOnly = true;
@@ -352,6 +434,8 @@ $users = $stmt->fetchAll();
                     passwordInput.required = false;
                     passwordInput.placeholder = 'เว้นว่างไว้หากไม่ต้องการเปลี่ยน';
                     document.getElementById('passwordHint').innerText = 'หากกรอกช่องนี้ รหัสผ่านเดิมจะถูกเปลี่ยนทันที';
+
+                    toggleShelterSelect(); // อัปเดตการแสดงผล Dropdown ตาม Role
                 }
                 
                 modal.show();

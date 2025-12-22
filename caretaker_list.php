@@ -1,7 +1,7 @@
 <?php
 // caretaker_list.php
 require_once 'config/db.php';
-require_once 'includes/functions.php'; // เรียกใช้ logActivity()
+require_once 'includes/functions.php'; // เรียกใช้ logActivity() และ renderPagination()
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
 
 // 1. Security Check
@@ -14,7 +14,7 @@ if (!isset($_SESSION['user_id'])) {
 // 2. Logic: Handle Actions (Add / Edit / Delete)
 // ------------------------------------------------------------------
 
-// 2.1 Handle Delete (GET)
+// 2.1 Handle Delete
 if (isset($_GET['action']) && $_GET['action'] == 'delete' && isset($_GET['id'])) {
     $id = $_GET['id'];
     try {
@@ -31,7 +31,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'delete' && isset($_GET['id']))
     exit();
 }
 
-// 2.2 Handle Save (POST)
+// 2.2 Handle Add / Edit Form Submit
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action_type'])) {
     
     $mode = $_POST['action_type'];
@@ -43,25 +43,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action_type'])) {
     $position = trim($_POST['position']);
     $phone = trim($_POST['phone']);
     $shelter_id = $_POST['shelter_id'];
+    
+    // Auto-generate full_name for database consistency
+    $full_name = $prefix . $first_name . ' ' . $last_name;
 
     if (empty($first_name) || empty($last_name) || empty($shelter_id)) {
         $_SESSION['swal_error'] = "กรุณากรอกข้อมูลให้ครบถ้วน";
     } else {
         try {
             if ($mode == 'add') {
-                $sql = "INSERT INTO caretakers (prefix, first_name, last_name, position, phone, shelter_id, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())";
+                // INSERT
+                $sql = "INSERT INTO caretakers (prefix, first_name, last_name, full_name, position, phone, shelter_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'active')";
                 $stmt = $pdo->prepare($sql);
-                $stmt->execute([$prefix, $first_name, $last_name, $position, $phone, $shelter_id]);
+                $stmt->execute([$prefix, $first_name, $last_name, $full_name, $position, $phone, $shelter_id]);
                 
-                logActivity($pdo, $_SESSION['user_id'], 'Add Caretaker', "เพิ่มผู้ดูแล: $first_name $last_name");
+                logActivity($pdo, $_SESSION['user_id'], 'Add Caretaker', "เพิ่มผู้ดูแล: $full_name");
                 $_SESSION['swal_success'] = "เพิ่มผู้ดูแลเรียบร้อยแล้ว";
 
             } else if ($mode == 'edit') {
-                $sql = "UPDATE caretakers SET prefix=?, first_name=?, last_name=?, position=?, phone=?, shelter_id=? WHERE id=?";
+                // UPDATE
+                $sql = "UPDATE caretakers SET prefix=?, first_name=?, last_name=?, full_name=?, position=?, phone=?, shelter_id=? WHERE id=?";
                 $stmt = $pdo->prepare($sql);
-                $stmt->execute([$prefix, $first_name, $last_name, $position, $phone, $shelter_id, $id]);
+                $stmt->execute([$prefix, $first_name, $last_name, $full_name, $position, $phone, $shelter_id, $id]);
                 
-                logActivity($pdo, $_SESSION['user_id'], 'Edit Caretaker', "แก้ไขผู้ดูแล: $first_name $last_name");
+                logActivity($pdo, $_SESSION['user_id'], 'Edit Caretaker', "แก้ไขผู้ดูแล: $full_name");
                 $_SESSION['swal_success'] = "แก้ไขข้อมูลเรียบร้อยแล้ว";
             }
         } catch (\PDOException $e) {
@@ -74,10 +79,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action_type'])) {
 }
 
 // ------------------------------------------------------------------
-// 3. Data Fetching
+// 3. Data Fetching & Pagination
 // ------------------------------------------------------------------
 
-// ดึงรายชื่อศูนย์พักพิง (สำหรับ Dropdown ใน Modal)
+// Pagination Setup
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$limit = 15; // รายการต่อหน้า
+$offset = ($page - 1) * $limit;
+
+// Filter Params
+$keyword = isset($_GET['keyword']) ? trim($_GET['keyword']) : '';
+$shelter_filter = isset($_GET['shelter_filter']) ? $_GET['shelter_filter'] : '';
+
+// 3.1 ดึงรายชื่อศูนย์พักพิง (สำหรับ Dropdown ตัวกรอง และ Modal)
 try {
     $sql_shelters = "SELECT s.id, s.name, i.name as incident_name, i.status 
                      FROM shelters s 
@@ -85,30 +99,48 @@ try {
                      ORDER BY i.status ASC, s.name ASC";
     $shelters = $pdo->query($sql_shelters)->fetchAll();
 } catch (\PDOException $e) {
-    $shelters = []; // กัน Error
+    $shelters = [];
 }
 
-// รับค่าค้นหา
-$keyword = isset($_GET['keyword']) ? trim($_GET['keyword']) : '';
-
-// Query รายชื่อผู้ดูแล
 $caretakers = [];
+$total_records = 0;
+$total_pages = 0;
+
 try {
+    // Construct Query Conditions
+    $where_sql = " WHERE (c.first_name LIKE ? OR c.last_name LIKE ? OR c.phone LIKE ? OR s.name LIKE ?) ";
+    $params = ["%$keyword%", "%$keyword%", "%$keyword%", "%$keyword%"];
+
+    if ($shelter_filter) {
+        $where_sql .= " AND c.shelter_id = ? ";
+        $params[] = $shelter_filter;
+    }
+
+    // 3.2 Count Total
+    $sql_count = "SELECT COUNT(*)
+            FROM caretakers c
+            LEFT JOIN shelters s ON c.shelter_id = s.id
+            " . $where_sql;
+    
+    $stmt_count = $pdo->prepare($sql_count);
+    $stmt_count->execute($params);
+    $total_records = $stmt_count->fetchColumn();
+    $total_pages = ceil($total_records / $limit);
+
+    // 3.3 Fetch Limit Data
     $sql = "SELECT c.*, s.name as shelter_name, i.name as incident_name, i.status as incident_status
             FROM caretakers c
             LEFT JOIN shelters s ON c.shelter_id = s.id
             LEFT JOIN incidents i ON s.incident_id = i.id
-            WHERE (c.first_name LIKE ? OR c.last_name LIKE ? OR c.phone LIKE ? OR s.name LIKE ?)
-            ORDER BY c.first_name ASC";
+            " . $where_sql . "
+            ORDER BY c.first_name ASC LIMIT $limit OFFSET $offset";
 
     $stmt = $pdo->prepare($sql);
-    $params = ["%$keyword%", "%$keyword%", "%$keyword%", "%$keyword%"];
     $stmt->execute($params);
     $caretakers = $stmt->fetchAll();
+
 } catch (\PDOException $e) {
-    // ใช้ \PDOException เพื่อให้มั่นใจว่าจับ Error ได้จริง
-    error_log("Caretaker Query Error: " . $e->getMessage());
-    $db_error = "เกิดข้อผิดพลาดฐานข้อมูล (Table Structure Mismatch). <a href='fix_db_caretakers.php' class='btn btn-warning btn-sm'>คลิกที่นี่เพื่อซ่อมแซมฐานข้อมูล</a>";
+    $db_error = "เกิดข้อผิดพลาดฐานข้อมูล: " . $e->getMessage();
 }
 ?>
 
@@ -146,10 +178,6 @@ try {
             border-bottom: 4px solid #fbbf24; /* Gold */
         }
         .btn-close-white { filter: invert(1) grayscale(100%) brightness(200%); }
-        
-        /* Fix modal z-index issues */
-        .modal-backdrop { z-index: 1050; }
-        .modal { z-index: 1060; }
     </style>
 </head>
 <body class="bg-light">
@@ -167,35 +195,44 @@ try {
             <span class="text-muted small">Caretaker Directory Management</span>
         </div>
         <!-- ปุ่มเปิด Modal สำหรับเพิ่มใหม่ -->
-        <button class="btn btn-primary shadow-sm" type="button" onclick="openAddModal()">
+        <button class="btn btn-primary shadow-sm fw-bold" type="button" onclick="openAddModal()">
             <i class="fas fa-user-plus me-2"></i>เพิ่มผู้ดูแล
         </button>
     </div>
 
-    <!-- DB Error Notification -->
-    <?php if(isset($db_error)): ?>
-        <div class="alert alert-danger shadow-sm border-danger">
-            <h4><i class="fas fa-tools"></i> ระบบตรวจพบปัญหาฐานข้อมูล</h4>
-            <p class="mb-2"><?php echo $db_error; ?></p>
-        </div>
-    <?php endif; ?>
-
-    <!-- Search Box -->
+    <!-- Filter & Search Box -->
     <div class="card border-0 shadow-sm mb-4">
         <div class="card-body p-3">
             <form action="" method="GET" class="row g-2 align-items-center">
-                <div class="col-auto">
-                    <label class="col-form-label fw-bold text-secondary">ค้นหา:</label>
-                </div>
+                <!-- Dropdown Filter Shelter -->
                 <div class="col-md-4">
-                    <input type="text" name="keyword" class="form-control" placeholder="ชื่อ, เบอร์โทร หรือชื่อศูนย์..." value="<?php echo htmlspecialchars($keyword); ?>">
+                    <select name="shelter_filter" class="form-select" onchange="this.form.submit()">
+                        <option value="">-- ดูผู้ดูแลทุกศูนย์ --</option>
+                        <?php foreach ($shelters as $s): ?>
+                            <option value="<?php echo $s['id']; ?>" <?php echo $shelter_filter == $s['id'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($s['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
-                <div class="col-auto">
-                    <button type="submit" class="btn btn-secondary"><i class="fas fa-search"></i></button>
-                    <?php if($keyword): ?>
-                        <a href="caretaker_list.php" class="btn btn-outline-secondary">ล้างค่า</a>
-                    <?php endif; ?>
+                
+                <!-- Keyword Search -->
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <span class="input-group-text bg-white text-muted"><i class="fas fa-search"></i></span>
+                        <input type="text" name="keyword" class="form-control" placeholder="ค้นหาชื่อ, เบอร์โทร..." value="<?php echo htmlspecialchars($keyword); ?>">
+                    </div>
                 </div>
+                
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-secondary w-100">ค้นหา</button>
+                </div>
+                
+                <?php if($keyword || $shelter_filter): ?>
+                    <div class="col-12 text-end">
+                        <a href="caretaker_list.php" class="text-muted small text-decoration-none"><i class="fas fa-times me-1"></i> ล้างค่าการค้นหา</a>
+                    </div>
+                <?php endif; ?>
             </form>
         </div>
     </div>
@@ -296,13 +333,22 @@ try {
                             <tr>
                                 <td colspan="7" class="text-center py-5 text-muted">
                                     <i class="fas fa-folder-open fa-3x mb-3 text-light"></i><br>
-                                    ไม่พบข้อมูลผู้ดูแล
+                                    ไม่พบข้อมูลผู้ดูแลในเงื่อนไขที่เลือก
                                 </td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
             </div>
+
+            <!-- Pagination -->
+            <div class="p-3 bg-light border-top">
+                <?php echo renderPagination($page, $total_pages, ['keyword' => $keyword, 'shelter_filter' => $shelter_filter]); ?>
+                <div class="text-center text-muted small mt-2">
+                    แสดง <?php echo count($caretakers); ?> จากทั้งหมด <?php echo number_format($total_records); ?> รายการ
+                </div>
+            </div>
+
         </div>
     </div>
 </div>
@@ -332,26 +378,28 @@ try {
                                 <option value="นาย">นาย</option>
                                 <option value="นาง">นาง</option>
                                 <option value="นางสาว">นางสาว</option>
+                                <option value="ด.ช.">ด.ช.</option>
+                                <option value="ด.ญ.">ด.ญ.</option>
                             </select>
                         </div>
                         <div class="col-md-5">
                             <label class="form-label fw-bold">ชื่อ <span class="text-danger">*</span></label>
-                            <input type="text" name="first_name" id="first_name" class="form-control" required>
+                            <input type="text" name="first_name" id="first_name" class="form-control" required placeholder="ระบุชื่อจริง">
                         </div>
                         <div class="col-md-4">
                             <label class="form-label fw-bold">นามสกุล <span class="text-danger">*</span></label>
-                            <input type="text" name="last_name" id="last_name" class="form-control" required>
+                            <input type="text" name="last_name" id="last_name" class="form-control" required placeholder="ระบุนามสกุล">
                         </div>
                     </div>
 
                     <div class="row g-3 mb-4">
                         <div class="col-md-6">
                             <label class="form-label fw-bold">ตำแหน่ง/หน้าที่</label>
-                            <input type="text" name="position" id="position" class="form-control" placeholder="เช่น พยาบาล, อาสาสมัคร">
+                            <input type="text" name="position" id="position" class="form-control" placeholder="เช่น พยาบาล, อาสาสมัคร, หัวหน้าศูนย์">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label fw-bold">เบอร์โทรศัพท์ติดต่อ</label>
-                            <input type="text" name="phone" id="phone" class="form-control">
+                            <input type="text" name="phone" id="phone" class="form-control" placeholder="08x-xxx-xxxx">
                         </div>
                     </div>
 

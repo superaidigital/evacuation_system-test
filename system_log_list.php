@@ -1,7 +1,7 @@
 <?php
 // system_log_list.php
 require_once 'config/db.php';
-require_once 'includes/functions.php'; // เรียกใช้ thaiDate()
+require_once 'includes/functions.php'; // renderPagination
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
 
 // 1. Security Check: เฉพาะ Admin เท่านั้น
@@ -16,35 +16,50 @@ $action_search = isset($_GET['action']) ? trim($_GET['action']) : '';
 $date_start = isset($_GET['date_start']) ? $_GET['date_start'] : '';
 $date_end = isset($_GET['date_end']) ? $_GET['date_end'] : '';
 
-// 3. Query Builder
-$sql = "SELECT l.*, u.username, u.full_name 
-        FROM system_logs l 
-        LEFT JOIN users u ON l.user_id = u.id 
-        WHERE 1=1 ";
+// 3. Pagination Setup
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$limit = 10; // แสดง 10 รายการต่อหน้า
+$offset = ($page - 1) * $limit;
+
+// 4. Query Construction
+// Base Condition
+$where_sql = " WHERE 1=1 ";
 $params = [];
 
 if ($user_search) {
-    $sql .= " AND (u.username LIKE ? OR u.full_name LIKE ?) ";
+    $where_sql .= " AND (u.username LIKE ? OR u.full_name LIKE ?) ";
     $params[] = "%$user_search%";
     $params[] = "%$user_search%";
 }
 
 if ($action_search) {
-    $sql .= " AND l.action LIKE ? ";
+    $where_sql .= " AND l.action LIKE ? ";
     $params[] = "%$action_search%";
 }
 
 if ($date_start) {
-    $sql .= " AND DATE(l.created_at) >= ? ";
+    $where_sql .= " AND DATE(l.created_at) >= ? ";
     $params[] = $date_start;
 }
 
 if ($date_end) {
-    $sql .= " AND DATE(l.created_at) <= ? ";
+    $where_sql .= " AND DATE(l.created_at) <= ? ";
     $params[] = $date_end;
 }
 
-$sql .= " ORDER BY l.created_at DESC LIMIT 200"; // จำกัด 200 รายการล่าสุดเพื่อความเร็ว
+// 4.1 Count Total
+$sql_count = "SELECT COUNT(*) FROM system_logs l LEFT JOIN users u ON l.user_id = u.id " . $where_sql;
+$stmt_count = $pdo->prepare($sql_count);
+$stmt_count->execute($params);
+$total_records = $stmt_count->fetchColumn();
+$total_pages = ceil($total_records / $limit);
+
+// 4.2 Fetch Data with Limit
+$sql = "SELECT l.*, u.username, u.full_name 
+        FROM system_logs l 
+        LEFT JOIN users u ON l.user_id = u.id 
+        $where_sql
+        ORDER BY l.created_at DESC LIMIT $limit OFFSET $offset";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
@@ -103,7 +118,7 @@ $logs = $stmt->fetchAll();
         </div>
         <div>
             <span class="badge bg-white text-dark border shadow-sm">
-                <i class="fas fa-list me-1"></i> แสดง 200 รายการล่าสุด
+                <i class="fas fa-list me-1"></i> รายการทั้งหมด <?php echo number_format($total_records); ?>
             </span>
         </div>
     </div>
@@ -211,6 +226,22 @@ $logs = $stmt->fetchAll();
                     </tbody>
                 </table>
             </div>
+
+            <!-- Pagination -->
+            <div class="p-3 bg-light border-top">
+                <?php 
+                    echo renderPagination($page, $total_pages, [
+                        'user' => $user_search,
+                        'action' => $action_search,
+                        'date_start' => $date_start,
+                        'date_end' => $date_end
+                    ]); 
+                ?>
+                <div class="text-center text-muted small mt-2">
+                    แสดง <?php echo count($logs); ?> จากทั้งหมด <?php echo number_format($total_records); ?> รายการ
+                </div>
+            </div>
+
         </div>
     </div>
 </div>

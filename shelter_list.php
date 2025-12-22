@@ -1,9 +1,10 @@
 <?php
 // shelter_list.php
 require_once 'config/db.php';
+require_once 'includes/functions.php'; // สำหรับ renderPagination
+
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
 
-// 1. Security Check
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
@@ -12,6 +13,11 @@ if (!isset($_SESSION['user_id'])) {
 // 2. Filter Logic
 $filter_incident_id = isset($_GET['filter_incident']) ? $_GET['filter_incident'] : '';
 $search_keyword = isset($_GET['search']) ? trim($_GET['search']) : '';
+
+// Pagination Setup
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$limit = 12; // แสดง 12 ใบ (Cards) ต่อหน้า
+$offset = ($page - 1) * $limit;
 
 // ถ้าไม่เลือก Incident ให้หา Active ล่าสุด
 if (!$filter_incident_id) {
@@ -24,12 +30,34 @@ if (!$filter_incident_id) {
 
 // 3. Fetch Data
 $shelters = [];
+$total_records = 0;
+$total_pages = 0;
+
 if ($filter_incident_id) {
+    
+    // 3.1 Count Total
+    $sql_count = "SELECT COUNT(*) FROM shelters s WHERE s.incident_id = ?";
+    $params = [$filter_incident_id];
+
+    if ($search_keyword) {
+        $sql_count .= " AND (s.name LIKE ? OR s.location LIKE ? OR s.contact_phone LIKE ?) ";
+        $params[] = "%$search_keyword%";
+        $params[] = "%$search_keyword%";
+        $params[] = "%$search_keyword%";
+    }
+    
+    $stmt_count = $pdo->prepare($sql_count);
+    $stmt_count->execute($params);
+    $total_records = $stmt_count->fetchColumn();
+    $total_pages = ceil($total_records / $limit);
+
+    // 3.2 Fetch Data with Limit
     $sql = "SELECT s.*, 
             (SELECT COUNT(*) FROM evacuees e WHERE e.shelter_id = s.id AND e.check_out_date IS NULL) as current_occupancy
             FROM shelters s 
             WHERE s.incident_id = ? ";
     
+    // Reset params for main query
     $params = [$filter_incident_id];
 
     if ($search_keyword) {
@@ -39,7 +67,7 @@ if ($filter_incident_id) {
         $params[] = "%$search_keyword%";
     }
     
-    $sql .= " ORDER BY s.name ASC";
+    $sql .= " ORDER BY s.name ASC LIMIT $limit OFFSET $offset";
     
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -161,7 +189,7 @@ $all_incidents = $pdo->query("SELECT id, name, status FROM incidents ORDER BY cr
         <?php else: ?>
             
             <!-- Shelter Grid -->
-            <div class="row g-4 pb-5">
+            <div class="row g-4 pb-3">
                 <?php foreach ($shelters as $row): ?>
                     <?php 
                         $status_class = 'status-open';
@@ -232,6 +260,17 @@ $all_incidents = $pdo->query("SELECT id, name, status FROM incidents ORDER BY cr
                     </div>
                 <?php endforeach; ?>
             </div>
+            
+            <!-- Pagination -->
+            <div class="pb-5">
+                <?php 
+                    echo renderPagination($page, $total_pages, [
+                        'filter_incident' => $filter_incident_id,
+                        'search' => $search_keyword
+                    ]); 
+                ?>
+            </div>
+
         <?php endif; ?>
     </div>
 </div>
