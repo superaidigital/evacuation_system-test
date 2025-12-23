@@ -3,6 +3,10 @@
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
 $current_page = basename($_SERVER['PHP_SELF']);
 $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
+
+// ตรวจสอบสิทธิ์เบื้องต้น
+$role = $_SESSION['role'] ?? 'guest';
+$is_admin = ($role === 'admin');
 ?>
 <!DOCTYPE html>
 <html lang="th">
@@ -191,7 +195,6 @@ $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
             text-decoration: none;
             transition: all 0.2s;
             border-left: 3px solid transparent;
-            /* Thin separator lines for formal list look */
             border-bottom: 1px solid rgba(255,255,255,0.02); 
             position: relative; 
             cursor: pointer;
@@ -312,13 +315,10 @@ $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
                     <?php echo strtoupper(substr($_SESSION['username'] ?? 'U', 0, 1)); ?>
                 </div>
                 <div class="user-info-text">
-                    <div class="user-name"><?php echo $_SESSION['fullname'] ?? 'ผู้ใช้งานทั่วไป'; ?></div>
+                    <div class="user-name"><?php echo $_SESSION['username'] ?? 'User'; ?></div>
                     <div class="user-role">
                         <i class="fas fa-circle fa-xs text-success me-1" style="font-size: 6px; vertical-align: middle;"></i>
-                        <?php 
-                            $role = $_SESSION['role'] ?? 'staff';
-                            echo ($role == 'admin') ? 'ผู้ดูแลระบบ (Admin)' : 'เจ้าหน้าที่ (Staff)';
-                        ?>
+                        <?php echo $is_admin ? 'ผู้ดูแลระบบ (Admin)' : 'เจ้าหน้าที่ (Staff)'; ?>
                     </div>
                 </div>
             </div>
@@ -327,18 +327,41 @@ $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
                 <li>
                     <a href="index.php" class="<?php echo $current_page == 'index.php' ? 'active' : ''; ?>">
                         <div class="d-flex align-items-center w-100">
-                            <i class="fas fa-tachometer-alt"></i> หน้าหลักภาพรวม
+                            <i class="fas fa-home"></i> หน้าหลักภาพรวม
                         </div>
                     </a>
                 </li>
-                
-                <li class="menu-label">ระบบฐานข้อมูล</li>
 
-                <!-- หมวด: ทะเบียนศูนย์พักพิง -->
+                <!-- 1. War Room / สถานการณ์ -->
+                <li class="menu-label">War Room & สถานการณ์</li>
+                
+                <li>
+                    <a href="monitor_dashboard.php" target="_blank" class="<?php echo $current_page == 'monitor_dashboard.php' ? 'active' : ''; ?>">
+                        <div class="d-flex align-items-center w-100">
+                            <i class="fas fa-desktop"></i> ศูนย์ปฏิบัติการ (War Room)
+                        </div>
+                    </a>
+                </li>
+                <li>
+                    <a href="gis_dashboard.php" target="_blank" class="<?php echo $current_page == 'gis_dashboard.php' ? 'active' : ''; ?>">
+                        <div class="d-flex align-items-center w-100">
+                            <i class="fas fa-map-marked-alt"></i> แผนที่สถานการณ์ (GIS)
+                        </div>
+                    </a>
+                </li>
+                <li>
+                    <a href="health_dashboard.php" class="<?php echo $current_page == 'health_dashboard.php' ? 'active' : ''; ?>">
+                        <div class="d-flex align-items-center w-100">
+                            <i class="fas fa-heartbeat"></i> สถานการณ์สุขภาพ
+                        </div>
+                    </a>
+                </li>
+
+                <!-- 2. ระบบฐานข้อมูล -->
+                <li class="menu-label">ระบบปฏิบัติการ</li>
+
+                <!-- ทะเบียนศูนย์พักพิง -->
                 <?php
-                    // Logic Active:
-                    // 1. หน้า shelter_form.php หรือ caretaker_list.php -> Active
-                    // 2. หน้า shelter_list.php แต่ต้องไม่ใช่หมวดผู้ประสบภัย (menu!=evacuee) -> Active
                     $is_shelter_active = in_array($current_page, ['shelter_form.php', 'caretaker_list.php']) || ($current_page == 'shelter_list.php' && $menu_context != 'evacuee');
                 ?>
                 <li>
@@ -349,24 +372,13 @@ $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
                         </div>
                     </a>
                     <ul class="collapse list-unstyled <?php echo $is_shelter_active ? 'show' : ''; ?>" id="shelterSubmenu">
-                        <li>
-                            <a href="shelter_list.php" class="<?php echo ($current_page == 'shelter_list.php' && $menu_context != 'evacuee') ? 'active' : ''; ?>">
-                                จัดการศูนย์พักพิง
-                            </a>
-                        </li>
-                        <li>
-                            <a href="caretaker_list.php" class="<?php echo $current_page == 'caretaker_list.php' ? 'active' : ''; ?>">
-                                ทำเนียบผู้ดูแลศูนย์
-                            </a>
-                        </li>
+                        <li><a href="shelter_list.php" class="<?php echo ($current_page == 'shelter_list.php' && $menu_context != 'evacuee') ? 'active' : ''; ?>">จัดการศูนย์พักพิง</a></li>
+                        <li><a href="caretaker_list.php" class="<?php echo $current_page == 'caretaker_list.php' ? 'active' : ''; ?>">ทำเนียบผู้ดูแลศูนย์</a></li>
                     </ul>
                 </li>
 
-                <!-- หมวด: ทะเบียนผู้ประสบภัย -->
+                <!-- ทะเบียนผู้ประสบภัย -->
                 <?php
-                    // Logic Active:
-                    // 1. หน้า evacuee_list.php, search_evacuee.php, import_csv.php -> Active
-                    // 2. หน้า shelter_list.php แต่ต้องเป็นหมวดผู้ประสบภัย (menu=evacuee) -> Active
                     $is_evacuee_active = in_array($current_page, ['evacuee_list.php', 'evacuee_form.php', 'search_evacuee.php', 'import_csv.php']) || ($current_page == 'shelter_list.php' && $menu_context == 'evacuee');
                 ?>
                 <li>
@@ -377,67 +389,77 @@ $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
                         </div>
                     </a>
                     <ul class="collapse list-unstyled <?php echo $is_evacuee_active ? 'show' : ''; ?>" id="evacueeSubmenu">
-                        <li>
-                            <a href="shelter_list.php?menu=evacuee" class="<?php echo ($current_page == 'shelter_list.php' && $menu_context == 'evacuee') ? 'active' : ''; ?>">
-                                รายชื่อผู้พักพิง (รายศูนย์)
-                            </a>
-                        </li>
-                        <li>
-                            <a href="search_evacuee.php" class="<?php echo $current_page == 'search_evacuee.php' ? 'active' : ''; ?>">
-                                ค้นหาข้อมูลบุคคล
-                            </a>
-                        </li>
-                        <li>
-                            <a href="import_csv.php" class="<?php echo $current_page == 'import_csv.php' ? 'active' : ''; ?>">
-                                นำเข้าข้อมูล (CSV)
-                            </a>
-                        </li>
+                        <li><a href="shelter_list.php?menu=evacuee" class="<?php echo ($current_page == 'shelter_list.php' && $menu_context == 'evacuee') ? 'active' : ''; ?>">รายชื่อผู้พักพิง (รายศูนย์)</a></li>
+                        <li><a href="search_evacuee.php" class="<?php echo $current_page == 'search_evacuee.php' ? 'active' : ''; ?>">ค้นหาข้อมูลบุคคล</a></li>
+                        <li><a href="import_csv.php" class="<?php echo $current_page == 'import_csv.php' ? 'active' : ''; ?>">นำเข้าข้อมูล (CSV)</a></li>
                     </ul>
                 </li>
 
-                <li class="menu-label">การรายงานและระบบ</li>
+                <!-- 3. Logistics & Requests -->
+                <li class="menu-label">สนับสนุน & ทรัพยากร</li>
+
+                <li>
+                    <a href="request_manager.php" class="<?php echo $current_page == 'request_manager.php' ? 'active' : ''; ?>">
+                        <div class="d-flex align-items-center w-100">
+                            <i class="fas fa-bullhorn"></i> ศูนย์ประสานงาน/คำร้อง
+                        </div>
+                    </a>
+                </li>
+                
+                <?php $is_logistics_active = in_array($current_page, ['distribution_manager.php', 'distribution_history.php']); ?>
+                <li>
+                    <a href="#logisticsSubmenu" data-bs-toggle="collapse" class="dropdown-toggle <?php echo $is_logistics_active ? 'active-parent' : ''; ?>">
+                        <div class="d-flex align-items-center w-100">
+                            <i class="fas fa-box-open"></i> บริหารสิ่งของ & คลัง
+                            <i class="fas fa-chevron-down dropdown-icon"></i>
+                        </div>
+                    </a>
+                    <ul class="collapse list-unstyled <?php echo $is_logistics_active ? 'show' : ''; ?>" id="logisticsSubmenu">
+                        <li><a href="distribution_manager.php" class="<?php echo $current_page == 'distribution_manager.php' ? 'active' : ''; ?>">รับบริจาค / แจกจ่าย</a></li>
+                        <li><a href="distribution_history.php" class="<?php echo $current_page == 'distribution_history.php' ? 'active' : ''; ?>">ประวัติรับ-จ่ายของ</a></li>
+                    </ul>
+                </li>
+
+                <!-- 4. Reports & Admin -->
+                <li class="menu-label">รายงาน & ระบบ</li>
 
                 <li>
                     <a href="report.php" class="<?php echo $current_page == 'report.php' ? 'active' : ''; ?>">
                         <div class="d-flex align-items-center w-100">
-                            <i class="fas fa-clipboard-list"></i> รายงานสรุปผล
+                            <i class="fas fa-file-alt"></i> รายงานสรุปผล
                         </div>
                     </a>
                 </li>
 
-                <?php if(isset($_SESSION['role']) && $_SESSION['role'] == 'admin'): ?>
+                <?php if($is_admin): ?>
+                <?php $is_admin_active = in_array($current_page, ['incident_manager.php', 'user_manager.php', 'system_log_list.php']); ?>
                 <li>
-                    <a href="#adminSubmenu" data-bs-toggle="collapse" class="dropdown-toggle">
+                    <a href="#adminSubmenu" data-bs-toggle="collapse" class="dropdown-toggle <?php echo $is_admin_active ? 'active-parent' : ''; ?>">
                         <div class="d-flex align-items-center w-100">
-                            <i class="fas fa-tools"></i> ส่วนผู้ดูแลระบบ
+                            <i class="fas fa-users-cog"></i> ส่วนผู้ดูแลระบบ
                             <i class="fas fa-chevron-down dropdown-icon"></i>
                         </div>
                     </a>
-                    <ul class="collapse list-unstyled <?php echo in_array($current_page, ['incident_manager.php', 'user_list.php', 'user_form.php', 'system_log_list.php']) ? 'show' : ''; ?>" id="adminSubmenu">
-                        <li><a href="incident_manager.php" class="<?php echo $current_page == 'incident_manager.php' ? 'active' : ''; ?>">จัดการเหตุการณ์ภัยพิบัติ</a></li>
-                        <li><a href="user_list.php" class="<?php echo in_array($current_page, ['user_list.php', 'user_form.php']) ? 'active' : ''; ?>">จัดการบัญชีผู้ใช้งาน</a></li>
+                    <ul class="collapse list-unstyled <?php echo $is_admin_active ? 'show' : ''; ?>" id="adminSubmenu">
+                        <li><a href="incident_manager.php" class="<?php echo $current_page == 'incident_manager.php' ? 'active' : ''; ?>">จัดการภัยพิบัติ</a></li>
+                        <li><a href="user_manager.php" class="<?php echo $current_page == 'user_manager.php' ? 'active' : ''; ?>">จัดการบัญชีผู้ใช้งาน</a></li>
                         <li><a href="system_log_list.php" class="<?php echo $current_page == 'system_log_list.php' ? 'active' : ''; ?>">ประวัติการใช้งาน (Logs)</a></li>
                     </ul>
                 </li>
                 <?php endif; ?>
 
-                <li>
-                    <a href="monitor_dashboard.php" target="_blank">
-                        <div class="d-flex align-items-center w-100">
-                            <i class="fas fa-desktop"></i> ศูนย์ปฏิบัติการ (War Room)
-                        </div>
-                    </a>
-                </li>
             </ul>
 
-            <div class="px-3 mt-4 mb-4">
+            <div class="px-3 mt-4 mb-5">
                 <a href="logout.php" class="btn btn-outline-danger w-100 btn-sm d-flex justify-content-center align-items-center gap-2">
                     <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
                 </a>
             </div>
         <?php else: ?>
              <div class="p-4 text-center">
+                <p class="text-white-50 small mb-3">กรุณาเข้าสู่ระบบเพื่อใช้งาน</p>
                 <a href="login.php" class="btn btn-primary w-100 fw-bold">เข้าสู่ระบบ</a>
+                <a href="family_finder.php" class="btn btn-outline-light w-100 mt-2 btn-sm">สำหรับประชาชน</a>
              </div>
         <?php endif; ?>
     </nav>
@@ -452,7 +474,6 @@ $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
                 </div>
                 <div class="page-title d-none d-sm-block">
                     <?php 
-                        // เปลี่ยนชื่อหัวข้อให้เป็นทางการตามหน้า
                         if($current_page == 'index.php') echo 'ภาพรวมสถานการณ์ (Dashboard)';
                         elseif(strpos($current_page, 'report') !== false) echo 'รายงานสรุปสถานการณ์';
                         elseif(strpos($current_page, 'shelter') !== false) echo 'ระบบทะเบียนศูนย์พักพิง';
@@ -460,13 +481,21 @@ $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
                         elseif(strpos($current_page, 'search') !== false) echo 'ระบบสืบค้นข้อมูล';
                         elseif(strpos($current_page, 'user') !== false) echo 'การจัดการบัญชีผู้ใช้งาน';
                         elseif(strpos($current_page, 'incident') !== false) echo 'การจัดการเหตุการณ์ภัยพิบัติ';
-                        elseif(strpos($current_page, 'log') !== false) echo 'ประวัติการใช้งานระบบ';
+                        elseif(strpos($current_page, 'request') !== false) echo 'ศูนย์ประสานงานและร้องขอ';
+                        elseif(strpos($current_page, 'distribution') !== false) echo 'บริหารจัดการทรัพยากร';
+                        elseif(strpos($current_page, 'gis') !== false) echo 'แผนที่สถานการณ์ (GIS)';
+                        elseif(strpos($current_page, 'health') !== false) echo 'สถานการณ์สุขภาพ';
                         else echo 'ระบบบริหารจัดการ';
                     ?>
                 </div>
             </div>
-            <div class="text-secondary small">
-                <i class="far fa-calendar-alt me-1"></i> <?php echo date('d F Y'); ?>
+            <div class="d-flex align-items-center gap-3">
+                <a href="family_finder.php" target="_blank" class="btn btn-sm btn-outline-secondary d-none d-md-block" title="หน้าสำหรับประชาชน">
+                    <i class="fas fa-users"></i> Public View
+                </a>
+                <div class="text-secondary small">
+                    <i class="far fa-calendar-alt me-1"></i> <?php echo date('d M Y'); ?>
+                </div>
             </div>
         </nav>
 

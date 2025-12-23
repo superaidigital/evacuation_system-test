@@ -1,7 +1,7 @@
 <?php
 // shelter_save.php
-// สคริปต์บันทึกข้อมูลศูนย์พักพิง
-// แก้ไข: ตัด 'code' ออก และแก้ Warning: Undefined array key สำหรับฟิลด์ที่อาจไม่มีค่าส่งมา
+// Refactored: Support Latitude & Longitude Saving (GIS)
+// จัดการการบันทึกข้อมูลศูนย์พักพิง รวมถึงพิกัดแผนที่
 
 require_once 'config/db.php';
 require_once 'includes/functions.php';
@@ -23,57 +23,65 @@ if (function_exists('validateCSRFToken')) {
     validateCSRFToken($csrf_token);
 }
 
-// 3. รับค่าและ Clean Input
-// ใช้ ?? '' (Null Coalescing) เพื่อป้องกัน Warning หากฟอร์มไม่ได้ส่งค่ามา
+// Helper: รับค่าและ Trim
+function getTrimmed($key, $default = '') {
+    return isset($_POST[$key]) ? trim($_POST[$key]) : $default;
+}
 
-$mode = cleanInput($_POST['mode'] ?? 'add');
-$id   = filter_input(INPUT_POST, 'id', FILTER_VALIDATE_INT);
+// 3. รับค่าจากฟอร์ม
+$mode           = getTrimmed('mode', 'add');
+$id             = filter_input(INPUT_POST, 'id', FILTER_VALIDATE_INT);
+$incident_id    = filter_input(INPUT_POST, 'incident_id', FILTER_VALIDATE_INT);
 
-// ข้อมูลหลัก
-$name     = cleanInput($_POST['name'] ?? '');
-$capacity = filter_input(INPUT_POST, 'capacity', FILTER_VALIDATE_INT);
-$status   = cleanInput($_POST['status'] ?? 'open');
+// ข้อมูลทั่วไป
+$name           = getTrimmed('name');
+$location       = getTrimmed('location');
+$capacity       = filter_input(INPUT_POST, 'capacity', FILTER_VALIDATE_INT);
+$contact_phone  = getTrimmed('contact_phone');
+$status         = getTrimmed('status', 'open');
 
-// ข้อมูลที่อยู่ (ใช้ ?? '' เพื่อแก้ปัญหา Warning: Undefined array key "subdistrict" ฯลฯ)
-$address     = cleanInput($_POST['address'] ?? '');
-$subdistrict = cleanInput($_POST['subdistrict'] ?? ''); 
-$district    = cleanInput($_POST['district'] ?? '');    
-$province    = cleanInput($_POST['province'] ?? '');    
-$latitude    = $_POST['latitude'] ?? null;
-$longitude   = $_POST['longitude'] ?? null;
+// ข้อมูลพิกัด (GIS) - ใช้ filter เพื่อตรวจสอบว่าเป็นตัวเลขทศนิยมจริง
+$latitude       = filter_input(INPUT_POST, 'latitude', FILTER_VALIDATE_FLOAT);
+$longitude      = filter_input(INPUT_POST, 'longitude', FILTER_VALIDATE_FLOAT);
 
-// ข้อมูลติดต่อ
-$contact_person = cleanInput($_POST['contact_person'] ?? '');
-$phone          = cleanInput($_POST['phone'] ?? '');
+// แปลง false เป็น null (กรณีค่าไม่ถูกต้องหรือว่างเปล่า) เพื่อให้ Database เก็บเป็น NULL
+if ($latitude === false) $latitude = null;
+if ($longitude === false) $longitude = null;
 
-// Validation
-if (empty($name) || empty($capacity)) {
-    echo "<script>alert('กรุณากรอกชื่อศูนย์และความจุ'); window.history.back();</script>";
+// 4. Validation
+$errors = [];
+if ($mode == 'add' && !$incident_id) $errors[] = "กรุณาเลือกภารกิจภัยพิบัติ";
+if (empty($name)) $errors[] = "กรุณาระบุชื่อศูนย์พักพิง";
+if (empty($location)) $errors[] = "กรุณาระบุรายละเอียดที่ตั้ง";
+if (!$capacity || $capacity <= 0) $errors[] = "กรุณาระบุความจุที่ถูกต้อง (ตัวเลขมากกว่า 0)";
+
+// หากมี Error
+if (!empty($errors)) {
+    $_SESSION['swal_error'] = implode("<br>", $errors);
+    header("Location: shelter_form.php?mode=$mode&id=$id");
     exit();
 }
 
 try {
-    // ตัดฟิลด์ 'code' ออกจาก SQL โดยสิ้นเชิง เพราะฐานข้อมูลไม่มีคอลัมน์นี้
+    // 5. Database Operation
     if ($mode == 'add') {
+        // เพิ่มข้อมูลใหม่
         $sql = "INSERT INTO shelters 
-                (name, address, subdistrict, district, province, latitude, longitude, capacity, status, contact_person, phone, created_at) 
+                (incident_id, name, location, latitude, longitude, capacity, contact_phone, status, last_updated) 
                 VALUES 
-                (:name, :address, :subdistrict, :district, :province, :latitude, :longitude, :capacity, :status, :contact_person, :phone, NOW())";
+                (:incident_id, :name, :location, :lat, :lng, :capacity, :contact_phone, :status, NOW())";
         $logAction = "Add Shelter";
     } else {
+        // แก้ไขข้อมูลเดิม
         $sql = "UPDATE shelters SET 
                 name = :name, 
-                address = :address,
-                subdistrict = :subdistrict,
-                district = :district,
-                province = :province,
-                latitude = :latitude,
-                longitude = :longitude,
+                location = :location,
+                latitude = :lat,
+                longitude = :lng,
                 capacity = :capacity, 
+                contact_phone = :contact_phone,
                 status = :status,
-                contact_person = :contact_person,
-                phone = :phone,
-                updated_at = NOW()
+                last_updated = NOW()
                 WHERE id = :id";
         $logAction = "Edit Shelter";
     }
@@ -82,47 +90,36 @@ try {
     
     // Bind Params
     $params = [
-        'name'           => $name,
-        'address'        => $address,
-        'subdistrict'    => $subdistrict,
-        'district'       => $district,
-        'province'       => $province,
-        'latitude'       => !empty($latitude) ? $latitude : null,
-        'longitude'      => !empty($longitude) ? $longitude : null,
-        'capacity'       => $capacity,
-        'status'         => $status,
-        'contact_person' => $contact_person,
-        'phone'          => $phone
+        ':name'          => $name,
+        ':location'      => $location,
+        ':lat'           => $latitude,
+        ':lng'           => $longitude,
+        ':capacity'      => $capacity,
+        ':contact_phone' => $contact_phone,
+        ':status'        => $status
     ];
 
-    if ($mode == 'edit') {
-        $params['id'] = $id;
+    if ($mode == 'add') {
+        $params[':incident_id'] = $incident_id;
+    } else {
+        $params[':id'] = $id;
     }
 
     $stmt->execute($params);
 
-    // บันทึก Log
+    // 6. Audit Log
     if (function_exists('logActivity')) {
-        logActivity($pdo, $_SESSION['user_id'], $logAction, "ชื่อศูนย์: $name");
+        $coordLog = ($latitude && $longitude) ? " (Lat: $latitude, Lng: $longitude)" : "";
+        logActivity($pdo, $_SESSION['user_id'], $logAction, "ชื่อศูนย์: $name" . $coordLog);
     }
 
-    $_SESSION['swal_success'] = "บันทึกข้อมูลศูนย์พักพิงเรียบร้อยแล้ว";
+    $_SESSION['swal_success'] = "บันทึกข้อมูลเรียบร้อยแล้ว";
     header("Location: shelter_list.php");
     exit();
 
 } catch (PDOException $e) {
-    // ดักจับ Error กรณี Column ไม่ครบ เพื่อแจ้งเตือนที่ชัดเจน
-    if ($e->getCode() == '42S22') {
-         // หากยังเจอ Error นี้ แสดงว่าอาจจะไม่มีคอลัมน์ subdistrict, district หรือ province ใน DB
-         $error_msg = "Database Error: ชื่อคอลัมน์ไม่ถูกต้อง (ตรวจสอบว่าในฐานข้อมูลมีคอลัมน์ subdistrict, district, province หรือไม่)";
-    } else {
-         $error_msg = "เกิดข้อผิดพลาด: " . $e->getMessage();
-    }
-    
-    error_log($e->getMessage());
-    $_SESSION['swal_error'] = $error_msg;
-    
-    // ส่งกลับไปหน้าฟอร์มพร้อม Error
+    error_log("Shelter Save Error: " . $e->getMessage());
+    $_SESSION['swal_error'] = "เกิดข้อผิดพลาดฐานข้อมูล: " . $e->getMessage();
     header("Location: shelter_form.php?mode=$mode&id=$id");
     exit();
 }
