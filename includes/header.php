@@ -4,9 +4,29 @@ if (session_status() == PHP_SESSION_NONE) { session_start(); }
 $current_page = basename($_SERVER['PHP_SELF']);
 $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
 
-// ตรวจสอบสิทธิ์เบื้องต้น
+// ตรวจสอบสิทธิ์และกำหนดตัวแปร Role
 $role = $_SESSION['role'] ?? 'guest';
 $is_admin = ($role === 'admin');
+$is_staff = ($role === 'staff');
+$is_donation = ($role === 'donation_officer');
+
+// สำหรับ Staff ให้ดึง Shelter ID ของตัวเองมาใช้ใน Link
+$my_shelter_id = $_SESSION['shelter_id'] ?? '';
+
+// --- เพิ่มเติม: ดึงชื่อศูนย์ที่รับผิดชอบมาแสดงใน Sidebar ---
+$user_shelter_name = '';
+if ($my_shelter_id && isset($pdo)) {
+    try {
+        $stmt_sh = $pdo->prepare("SELECT name FROM shelters WHERE id = ?");
+        $stmt_sh->execute([$my_shelter_id]);
+        $res_sh = $stmt_sh->fetch(PDO::FETCH_ASSOC);
+        if ($res_sh) {
+            $user_shelter_name = $res_sh['name'];
+        }
+    } catch (Exception $e) {
+        // กรณี Query ผิดพลาด ไม่ต้องแสดงชื่อศูนย์
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="th">
@@ -318,8 +338,20 @@ $is_admin = ($role === 'admin');
                     <div class="user-name"><?php echo $_SESSION['username'] ?? 'User'; ?></div>
                     <div class="user-role">
                         <i class="fas fa-circle fa-xs text-success me-1" style="font-size: 6px; vertical-align: middle;"></i>
-                        <?php echo $is_admin ? 'ผู้ดูแลระบบ (Admin)' : 'เจ้าหน้าที่ (Staff)'; ?>
+                        <?php 
+                            if ($is_admin) echo 'ผู้ดูแลระบบ (Admin)';
+                            elseif ($is_staff) echo 'เจ้าหน้าที่ (Staff)';
+                            elseif ($is_donation) echo 'จนท.ทรัพยากร';
+                            else echo 'ผู้เยี่ยมชม';
+                        ?>
                     </div>
+                    <!-- ส่วนแสดงชื่อศูนย์ที่รับผิดชอบ -->
+                    <?php if($user_shelter_name): ?>
+                        <div class="text-warning mt-1" style="font-size: 0.75rem; line-height: 1.2;">
+                            <i class="fas fa-home me-1"></i> 
+                            <?php echo htmlspecialchars($user_shelter_name); ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -357,45 +389,77 @@ $is_admin = ($role === 'admin');
                     </a>
                 </li>
 
-                <!-- 2. ระบบฐานข้อมูล -->
+                <!-- 2. ระบบปฏิบัติการ -->
+                <?php if ($is_admin || $is_staff): ?>
                 <li class="menu-label">ระบบปฏิบัติการ</li>
 
-                <!-- ทะเบียนศูนย์พักพิง -->
-                <?php
-                    $is_shelter_active = in_array($current_page, ['shelter_form.php', 'caretaker_list.php']) || ($current_page == 'shelter_list.php' && $menu_context != 'evacuee');
-                ?>
-                <li>
-                    <a href="#shelterSubmenu" data-bs-toggle="collapse" class="dropdown-toggle <?php echo $is_shelter_active ? 'active-parent' : ''; ?>">
-                        <div class="d-flex align-items-center w-100">
-                            <i class="fas fa-landmark"></i> ทะเบียนศูนย์พักพิง
-                            <i class="fas fa-chevron-down dropdown-icon"></i>
-                        </div>
-                    </a>
-                    <ul class="collapse list-unstyled <?php echo $is_shelter_active ? 'show' : ''; ?>" id="shelterSubmenu">
-                        <li><a href="shelter_list.php" class="<?php echo ($current_page == 'shelter_list.php' && $menu_context != 'evacuee') ? 'active' : ''; ?>">จัดการศูนย์พักพิง</a></li>
-                        <li><a href="caretaker_list.php" class="<?php echo $current_page == 'caretaker_list.php' ? 'active' : ''; ?>">ทำเนียบผู้ดูแลศูนย์</a></li>
-                    </ul>
-                </li>
+                <!-- CASE 1: Admin - เห็นทุกเมนู -->
+                <?php if ($is_admin): ?>
+                    <!-- ทะเบียนศูนย์พักพิง (Admin Only) -->
+                    <?php
+                        $is_shelter_active = in_array($current_page, ['shelter_form.php', 'caretaker_list.php']) || ($current_page == 'shelter_list.php' && $menu_context != 'evacuee');
+                    ?>
+                    <li>
+                        <a href="#shelterSubmenu" data-bs-toggle="collapse" class="dropdown-toggle <?php echo $is_shelter_active ? 'active-parent' : ''; ?>">
+                            <div class="d-flex align-items-center w-100">
+                                <i class="fas fa-landmark"></i> ทะเบียนศูนย์พักพิง
+                                <i class="fas fa-chevron-down dropdown-icon"></i>
+                            </div>
+                        </a>
+                        <ul class="collapse list-unstyled <?php echo $is_shelter_active ? 'show' : ''; ?>" id="shelterSubmenu">
+                            <li><a href="shelter_list.php" class="<?php echo ($current_page == 'shelter_list.php' && $menu_context != 'evacuee') ? 'active' : ''; ?>">จัดการศูนย์พักพิง</a></li>
+                            <li><a href="caretaker_list.php" class="<?php echo $current_page == 'caretaker_list.php' ? 'active' : ''; ?>">ทำเนียบผู้ดูแลศูนย์</a></li>
+                        </ul>
+                    </li>
 
-                <!-- ทะเบียนผู้ประสบภัย -->
-                <?php
-                    $is_evacuee_active = in_array($current_page, ['evacuee_list.php', 'evacuee_form.php', 'search_evacuee.php', 'import_csv.php']) || ($current_page == 'shelter_list.php' && $menu_context == 'evacuee');
-                ?>
-                <li>
-                    <a href="#evacueeSubmenu" data-bs-toggle="collapse" class="dropdown-toggle <?php echo $is_evacuee_active ? 'active-parent' : ''; ?>">
-                        <div class="d-flex align-items-center w-100">
-                            <i class="fas fa-address-book"></i> ทะเบียนผู้ประสบภัย
-                            <i class="fas fa-chevron-down dropdown-icon"></i>
-                        </div>
-                    </a>
-                    <ul class="collapse list-unstyled <?php echo $is_evacuee_active ? 'show' : ''; ?>" id="evacueeSubmenu">
-                        <li><a href="shelter_list.php?menu=evacuee" class="<?php echo ($current_page == 'shelter_list.php' && $menu_context == 'evacuee') ? 'active' : ''; ?>">รายชื่อผู้พักพิง (รายศูนย์)</a></li>
-                        <li><a href="search_evacuee.php" class="<?php echo $current_page == 'search_evacuee.php' ? 'active' : ''; ?>">ค้นหาข้อมูลบุคคล</a></li>
-                        <li><a href="import_csv.php" class="<?php echo $current_page == 'import_csv.php' ? 'active' : ''; ?>">นำเข้าข้อมูล (CSV)</a></li>
-                    </ul>
-                </li>
+                    <!-- ทะเบียนผู้ประสบภัย (Admin Menu) -->
+                    <?php
+                        $is_evacuee_active = in_array($current_page, ['evacuee_list.php', 'evacuee_form.php', 'search_evacuee.php', 'import_csv.php']) || ($current_page == 'shelter_list.php' && $menu_context == 'evacuee');
+                    ?>
+                    <li>
+                        <a href="#evacueeSubmenu" data-bs-toggle="collapse" class="dropdown-toggle <?php echo $is_evacuee_active ? 'active-parent' : ''; ?>">
+                            <div class="d-flex align-items-center w-100">
+                                <i class="fas fa-address-book"></i> ทะเบียนผู้ประสบภัย
+                                <i class="fas fa-chevron-down dropdown-icon"></i>
+                            </div>
+                        </a>
+                        <ul class="collapse list-unstyled <?php echo $is_evacuee_active ? 'show' : ''; ?>" id="evacueeSubmenu">
+                            <li><a href="shelter_list.php?menu=evacuee" class="<?php echo ($current_page == 'shelter_list.php' && $menu_context == 'evacuee') ? 'active' : ''; ?>">รายชื่อผู้พักพิง (รายศูนย์)</a></li>
+                            <li><a href="search_evacuee.php" class="<?php echo $current_page == 'search_evacuee.php' ? 'active' : ''; ?>">ค้นหาข้อมูลบุคคล</a></li>
+                            <li><a href="import_csv.php" class="<?php echo $current_page == 'import_csv.php' ? 'active' : ''; ?>">นำเข้าข้อมูล (CSV)</a></li>
+                        </ul>
+                    </li>
+                
+                <!-- CASE 2: Staff - เห็นเฉพาะเมนูที่จำเป็น -->
+                <?php elseif ($is_staff): ?>
+                    <?php
+                        $is_evacuee_active = in_array($current_page, ['evacuee_list.php', 'evacuee_form.php', 'search_evacuee.php', 'import_csv.php']);
+                    ?>
+                    <!-- เมนูทะเบียนผู้ประสบภัย สำหรับ Staff (แบบ Expanded) -->
+                    <li>
+                        <a href="#evacueeSubmenuStaff" data-bs-toggle="collapse" class="dropdown-toggle <?php echo $is_evacuee_active ? 'active-parent' : ''; ?>">
+                            <div class="d-flex align-items-center w-100">
+                                <i class="fas fa-address-book"></i> ทะเบียนผู้ประสบภัย
+                                <i class="fas fa-chevron-down dropdown-icon"></i>
+                            </div>
+                        </a>
+                        <ul class="collapse list-unstyled <?php echo $is_evacuee_active ? 'show' : ''; ?>" id="evacueeSubmenuStaff">
+                            <!-- 1. รายชื่อผู้พักพิง (กรองเฉพาะศูนย์ตัวเอง) -->
+                            <li><a href="evacuee_list.php?shelter_id=<?php echo $my_shelter_id; ?>" class="<?php echo $current_page == 'evacuee_list.php' ? 'active' : ''; ?>">รายชื่อผู้พักพิง (Roster)</a></li>
+                            
+                            <!-- 2. ค้นหาข้อมูล -->
+                            <li><a href="search_evacuee.php" class="<?php echo $current_page == 'search_evacuee.php' ? 'active' : ''; ?>">ค้นหาข้อมูลบุคคล</a></li>
+                            
+                            <!-- 3. นำเข้าข้อมูล -->
+                            <li><a href="import_csv.php" class="<?php echo $current_page == 'import_csv.php' ? 'active' : ''; ?>">นำเข้าข้อมูล (CSV)</a></li>
+                        </ul>
+                    </li>
+                    <!-- หมายเหตุ: เมนูทะเบียนศูนย์พักพิง ถูกซ่อนสำหรับ Staff ตาม Requirement -->
+                <?php endif; ?>
 
-                <!-- 3. Logistics & Requests -->
+                <?php endif; ?>
+
+                <!-- 3. Logistics & Requests (ทุกคนเห็น) -->
                 <li class="menu-label">สนับสนุน & ทรัพยากร</li>
 
                 <li>
@@ -406,7 +470,7 @@ $is_admin = ($role === 'admin');
                     </a>
                 </li>
                 
-                <?php $is_logistics_active = in_array($current_page, ['distribution_manager.php', 'distribution_history.php']); ?>
+                <?php $is_logistics_active = in_array($current_page, ['distribution_manager.php', 'distribution_history.php', 'inventory_list.php']); ?>
                 <li>
                     <a href="#logisticsSubmenu" data-bs-toggle="collapse" class="dropdown-toggle <?php echo $is_logistics_active ? 'active-parent' : ''; ?>">
                         <div class="d-flex align-items-center w-100">
@@ -415,21 +479,39 @@ $is_admin = ($role === 'admin');
                         </div>
                     </a>
                     <ul class="collapse list-unstyled <?php echo $is_logistics_active ? 'show' : ''; ?>" id="logisticsSubmenu">
-                        <li><a href="distribution_manager.php" class="<?php echo $current_page == 'distribution_manager.php' ? 'active' : ''; ?>">รับบริจาค / แจกจ่าย</a></li>
+                        <!-- เพิ่มเมนูคลังสินค้าสำหรับ จนท. ทรัพยากร และ Admin -->
+                        <li><a href="inventory_list.php" class="<?php echo $current_page == 'inventory_list.php' ? 'active' : ''; ?>">คลังสินค้า / รับบริจาค</a></li>
+                        <li><a href="distribution_manager.php" class="<?php echo $current_page == 'distribution_manager.php' ? 'active' : ''; ?>">เบิกจ่ายสิ่งของ</a></li>
                         <li><a href="distribution_history.php" class="<?php echo $current_page == 'distribution_history.php' ? 'active' : ''; ?>">ประวัติรับ-จ่ายของ</a></li>
                     </ul>
                 </li>
 
                 <!-- 4. Reports & Admin -->
+                <?php if ($is_admin || $is_donation || $is_staff): ?>
                 <li class="menu-label">รายงาน & ระบบ</li>
 
+                <!-- [NEW] Shelter Dashboard for Staff & Admin -->
                 <li>
-                    <a href="report.php" class="<?php echo $current_page == 'report.php' ? 'active' : ''; ?>">
-                        <div class="d-flex align-items-center w-100">
-                            <i class="fas fa-file-alt"></i> รายงานสรุปผล
-                        </div>
+                    <a href="shelter_dashboard.php" class="<?php echo $current_page == 'shelter_dashboard.php' ? 'active' : ''; ?>">
+                        <div class="d-flex align-items-center w-100"><i class="fas fa-chart-pie"></i> Dashboard ข้อมูลศูนย์</div>
                     </a>
                 </li>
+
+                <!-- [NEW] Donation Dashboard -->
+                <li>
+                    <a href="donation_dashboard.php" class="<?php echo $current_page == 'donation_dashboard.php' ? 'active' : ''; ?>">
+                        <div class="d-flex align-items-center w-100"><i class="fas fa-hand-holding-heart"></i> Dashboard การรับบริจาค</div>
+                    </a>
+                </li>
+
+                <?php if ($is_admin || $is_donation): ?>
+                <li>
+                    <a href="report.php" class="<?php echo $current_page == 'report.php' ? 'active' : ''; ?>">
+                        <div class="d-flex align-items-center w-100"><i class="fas fa-file-alt"></i> รายงานสรุปภาพรวม</div>
+                    </a>
+                </li>
+                <?php endif; ?>
+                <?php endif; ?>
 
                 <?php if($is_admin): ?>
                 <?php $is_admin_active = in_array($current_page, ['incident_manager.php', 'user_manager.php', 'system_log_list.php']); ?>
@@ -451,7 +533,8 @@ $is_admin = ($role === 'admin');
             </ul>
 
             <div class="px-3 mt-4 mb-5">
-                <a href="logout.php" class="btn btn-outline-danger w-100 btn-sm d-flex justify-content-center align-items-center gap-2">
+                <!-- แก้ไขปุ่มออกจากระบบให้มี Popup ยืนยัน -->
+                <a href="#" onclick="confirmLogout(event)" class="btn btn-outline-danger w-100 btn-sm d-flex justify-content-center align-items-center gap-2">
                     <i class="fas fa-sign-out-alt"></i> ออกจากระบบ
                 </a>
             </div>
@@ -476,13 +559,14 @@ $is_admin = ($role === 'admin');
                     <?php 
                         if($current_page == 'index.php') echo 'ภาพรวมสถานการณ์ (Dashboard)';
                         elseif(strpos($current_page, 'report') !== false) echo 'รายงานสรุปสถานการณ์';
+                        elseif(strpos($current_page, 'shelter_dashboard') !== false) echo 'Dashboard ข้อมูลศูนย์พักพิง';
                         elseif(strpos($current_page, 'shelter') !== false) echo 'ระบบทะเบียนศูนย์พักพิง';
                         elseif(strpos($current_page, 'evacuee') !== false) echo 'ระบบทะเบียนผู้ประสบภัย';
                         elseif(strpos($current_page, 'search') !== false) echo 'ระบบสืบค้นข้อมูล';
                         elseif(strpos($current_page, 'user') !== false) echo 'การจัดการบัญชีผู้ใช้งาน';
                         elseif(strpos($current_page, 'incident') !== false) echo 'การจัดการเหตุการณ์ภัยพิบัติ';
                         elseif(strpos($current_page, 'request') !== false) echo 'ศูนย์ประสานงานและร้องขอ';
-                        elseif(strpos($current_page, 'distribution') !== false) echo 'บริหารจัดการทรัพยากร';
+                        elseif(strpos($current_page, 'distribution') !== false || strpos($current_page, 'inventory') !== false) echo 'บริหารจัดการทรัพยากร';
                         elseif(strpos($current_page, 'gis') !== false) echo 'แผนที่สถานการณ์ (GIS)';
                         elseif(strpos($current_page, 'health') !== false) echo 'สถานการณ์สุขภาพ';
                         else echo 'ระบบบริหารจัดการ';
@@ -501,3 +585,24 @@ $is_admin = ($role === 'admin');
 
         <!-- Main Content Padding -->
         <div class="p-4">
+
+<!-- Logout Confirmation Script -->
+<script>
+    function confirmLogout(e) {
+        e.preventDefault();
+        Swal.fire({
+            title: 'ยืนยันการออกจากระบบ?',
+            text: "คุณต้องการออกจากระบบใช่หรือไม่",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'ใช่, ออกจากระบบ',
+            cancelButtonText: 'ยกเลิก'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                window.location.href = 'logout.php';
+            }
+        });
+    }
+</script>

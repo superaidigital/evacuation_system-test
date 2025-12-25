@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Dec 23, 2025 at 12:11 PM
+-- Generation Time: Dec 25, 2025 at 11:54 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.1.25
 
@@ -160,6 +160,20 @@ CREATE TABLE `inventory` (
   `category` varchar(50) DEFAULT 'general'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+--
+-- Dumping data for table `inventory`
+--
+
+INSERT INTO `inventory` (`id`, `shelter_id`, `item_name`, `quantity`, `unit`, `last_updated`, `category`) VALUES
+(6, 2, 'น้ำดื่ม (แพ็ค)', 490, 'แพ็ค', '2025-12-24 10:20:53', 'food'),
+(7, 2, 'ข้าวสาร (ถุง 5kg)', 1000, 'ถุง', '2025-12-24 09:27:21', 'food'),
+(8, 2, 'บะหมี่กึ่งสำเร็จรูป (กล่อง)', 95, 'กล่อง', '2025-12-24 10:21:25', 'food'),
+(9, 2, 'ปลากระป๋อง (กระป๋อง)', 500, 'กล่อง', '2025-12-23 11:27:31', 'food'),
+(10, 2, 'มุ้ง (หลัง)', 500, 'หลัง', '2025-12-23 11:27:54', 'general'),
+(11, 2, 'ผ้าห่ม (ผืน)', 1990, 'ผืน', '2025-12-24 10:21:11', 'ของใช้ทั่วไป'),
+(12, 3, 'น้ำดื่ม (แพ็ค)', 500, 'แพ็ค', '2025-12-24 07:55:22', 'น้ำดื่ม'),
+(13, 1, 'น้ำดื่ม (แพ็ค)', 500, 'แพ็ค', '2025-12-25 07:18:48', 'น้ำดื่ม');
+
 -- --------------------------------------------------------
 
 --
@@ -175,6 +189,24 @@ CREATE TABLE `inventory_transactions` (
   `note` text DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `inventory_transactions`
+--
+
+INSERT INTO `inventory_transactions` (`id`, `inventory_id`, `transaction_type`, `quantity`, `user_id`, `note`, `created_at`) VALUES
+(1, 7, 'out', 50, 1, 'แจกจ่ายทั่วไป: แจกเพื่อประกอบอาหาร', '2025-12-24 14:24:55'),
+(2, 12, 'in', 500, 1, 'Initial Stock: อบจ.ศรีสะเกษ', '2025-12-24 14:55:22'),
+(3, 7, 'in', 500, 1, 'รับจาก: กาชาด', '2025-12-24 16:05:18'),
+(4, 7, 'in', 50, 1, 'รับจาก: กาชาด', '2025-12-24 16:05:26'),
+(5, 7, 'in', 500, 1, 'รับจาก: กาชาด', '2025-12-24 16:14:58'),
+(6, 7, 'out', 100, 1, 'แจกส่วนกลาง: ครัวกลาง (ผู้เบิก: นายปฐวีกานต์ ศรีคราม)', '2025-12-24 16:27:21'),
+(7, 6, 'out', 5, 1, 'แจกส่วนกลาง: ครัวกลาง (ผู้เบิก: นายปฐวีกานต์ ศรีคราม)', '2025-12-24 17:10:28'),
+(8, 11, 'out', 5, 1, 'แจกส่วนกลาง: ครัวกลาง', '2025-12-24 17:20:35'),
+(9, 6, 'out', 5, 1, 'แจกส่วนกลาง: ครัวกลาง (ผู้เบิก: นายปฐวีกานต์ ศรีคราม)', '2025-12-24 17:20:53'),
+(10, 11, 'out', 5, 1, 'แจกส่วนกลาง: ครัวกลาง (ผู้เบิก: นายปฐวีกานต์ ศรีคราม)', '2025-12-24 17:21:11'),
+(11, 8, 'out', 5, 1, 'แจกส่วนกลาง: ครัวกลาง (ผู้เบิก: นายปฐวีกานต์ ศรีคราม)', '2025-12-24 17:21:25'),
+(12, 13, 'in', 500, 3, 'Initial Stock: กาชาด', '2025-12-25 14:18:48');
 
 -- --------------------------------------------------------
 
@@ -248,7 +280,8 @@ CREATE TABLE `shelter_requests` (
 --
 
 INSERT INTO `shelter_requests` (`id`, `shelter_id`, `category`, `urgency`, `detail`, `quantity`, `status`, `response_note`, `created_by`, `created_at`, `updated_at`) VALUES
-(1, 1, 'medical', 'high', 'ยาเบาหวาน', '5 แพ็ค', 'approved', '', 1, '2025-12-23 15:45:12', '2025-12-23 15:48:38');
+(1, 1, 'medical', 'high', 'ยาเบาหวาน', '5 แพ็ค', 'completed', '', 1, '2025-12-23 15:45:12', '2025-12-24 10:17:14'),
+(2, 1, 'supplies', 'normal', 'น้ำดืม', '50 แพ็ค', 'pending', NULL, 1, '2025-12-23 18:23:13', NULL);
 
 -- --------------------------------------------------------
 
@@ -320,7 +353,33 @@ INSERT INTO `system_logs` (`id`, `user_id`, `action`, `description`, `ip_address
 (48, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-23 09:48:41'),
 (49, 1, 'Add Shelter', 'ชื่อศูนย์: ศูนย์อาคารพละวีสมหมาย (Lat: 15.101142, Lng: 104.34057)', '::1', '2025-12-23 09:51:07'),
 (50, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายนายปฐวีกานต์ ศรีคราม', '::1', '2025-12-23 09:54:20'),
-(51, 1, 'Edit Shelter', 'ชื่อศูนย์: ศูนย์อาคารพละวีสมหมาย (Lat: 15.101142, Lng: 104.34057)', '::1', '2025-12-23 09:54:29');
+(51, 1, 'Edit Shelter', 'ชื่อศูนย์: ศูนย์อาคารพละวีสมหมาย (Lat: 15.101142, Lng: 104.34057)', '::1', '2025-12-23 09:54:29'),
+(52, 1, 'Edit Caretaker', 'แก้ไขผู้ดูแล: นายนายปฐวีกานต์ ศรีคราม', '::1', '2025-12-23 11:20:37'),
+(53, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-23 11:31:51'),
+(54, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-24 03:02:43'),
+(55, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-24 03:15:31'),
+(56, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-24 03:27:27'),
+(57, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-24 07:09:43'),
+(58, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-24 07:15:02'),
+(59, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-24 07:15:08'),
+(60, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-24 07:37:24'),
+(61, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-24 10:29:42'),
+(62, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 03:35:13'),
+(63, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 04:23:51'),
+(64, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 07:17:47'),
+(65, 3, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 07:17:50'),
+(66, 3, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 07:19:27'),
+(67, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 07:19:29'),
+(68, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 07:26:02'),
+(69, 3, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 07:26:08'),
+(70, 3, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 07:34:30'),
+(71, 2, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 07:34:41'),
+(72, 2, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 08:21:40'),
+(73, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 08:21:44'),
+(74, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 08:24:18'),
+(75, 2, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 08:24:21'),
+(76, 2, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 10:33:24'),
+(77, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 10:33:28');
 
 -- --------------------------------------------------------
 
@@ -332,8 +391,10 @@ CREATE TABLE `users` (
   `id` int(11) NOT NULL,
   `username` varchar(50) NOT NULL COMMENT 'ชื่อผู้ใช้',
   `password` varchar(255) NOT NULL COMMENT 'รหัสผ่าน (Hashed)',
+  `first_name` varchar(100) DEFAULT '',
+  `last_name` varchar(100) DEFAULT '',
   `full_name` varchar(100) NOT NULL COMMENT 'ชื่อ-นามสกุล',
-  `role` enum('admin','staff','volunteer') NOT NULL DEFAULT 'staff' COMMENT 'สิทธิ์การใช้งาน',
+  `role` varchar(50) NOT NULL DEFAULT 'staff',
   `shelter_id` int(11) DEFAULT NULL COMMENT 'สังกัดศูนย์พักพิง',
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `last_login` datetime DEFAULT NULL
@@ -343,11 +404,11 @@ CREATE TABLE `users` (
 -- Dumping data for table `users`
 --
 
-INSERT INTO `users` (`id`, `username`, `password`, `full_name`, `role`, `shelter_id`, `created_at`, `last_login`) VALUES
-(1, 'admin', '$2a$12$zk8PKOASddu96PjkItPoFu9JyLOZMeoC4gg4.BoVElSsBKyKtcss2', 'ผู้ดูแลระบบสูงสุด', 'admin', NULL, '2025-12-22 07:12:37', NULL),
-(2, 'staff01', '$2y$10$cOmaH/AjDmYBy1O4H/OMx.W/EUCtipk7jFSyaprR7C93pYj.X1dfO', 'เจ้าหน้าที่ สมชาย ใจดี', 'staff', 1, '2025-12-22 07:12:37', NULL),
-(3, 'staff02', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'เจ้าหน้าที่ สมหญิง รักงาน', 'staff', NULL, '2025-12-22 07:12:37', NULL),
-(4, 'volunteer01', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'อาสาสมัคร ก.', 'volunteer', NULL, '2025-12-22 07:12:37', NULL);
+INSERT INTO `users` (`id`, `username`, `password`, `first_name`, `last_name`, `full_name`, `role`, `shelter_id`, `created_at`, `last_login`) VALUES
+(1, 'admin', '$2a$12$zk8PKOASddu96PjkItPoFu9JyLOZMeoC4gg4.BoVElSsBKyKtcss2', '', '', 'ผู้ดูแลระบบสูงสุด', 'admin', NULL, '2025-12-22 07:12:37', NULL),
+(2, 'staff01', '$2y$10$cOmaH/AjDmYBy1O4H/OMx.W/EUCtipk7jFSyaprR7C93pYj.X1dfO', 'ปฐวีกานต์', 'ศรีคราม', 'เจ้าหน้าที่ สมชาย ใจดี', 'staff', 1, '2025-12-22 07:12:37', NULL),
+(3, 'staff02', '$2y$10$KA83yGsOxdUgcjB0WO5WNOKiCbQP.uF3Gyhw.UaTapbPT/5YZ/dJW', 'ปฐวีกานต์', 'ศรีคราม', 'เจ้าหน้าที่ สมหญิง รักงาน', 'donation_officer', 1, '2025-12-22 07:12:37', NULL),
+(4, 'volunteer01', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', '', '', 'อาสาสมัคร ก.', 'volunteer', NULL, '2025-12-22 07:12:37', NULL);
 
 -- --------------------------------------------------------
 
@@ -506,13 +567,13 @@ ALTER TABLE `incidents`
 -- AUTO_INCREMENT for table `inventory`
 --
 ALTER TABLE `inventory`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
 
 --
 -- AUTO_INCREMENT for table `inventory_transactions`
 --
 ALTER TABLE `inventory_transactions`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
 
 --
 -- AUTO_INCREMENT for table `medical_records`
@@ -530,13 +591,13 @@ ALTER TABLE `shelters`
 -- AUTO_INCREMENT for table `shelter_requests`
 --
 ALTER TABLE `shelter_requests`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT for table `system_logs`
 --
 ALTER TABLE `system_logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=52;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=78;
 
 --
 -- AUTO_INCREMENT for table `users`

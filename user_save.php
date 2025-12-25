@@ -1,70 +1,89 @@
 <?php
 // user_save.php
-// Handle User Add/Edit/Delete
-
+// ระบบบันทึกข้อมูลผู้ใช้งาน (Backend)
 require_once 'config/db.php';
 require_once 'includes/functions.php';
 
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
-    die("Access Denied");
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') { 
+    header("Location: login.php"); exit(); 
 }
 
-// CSRF Check (รับทั้ง POST และ GET สำหรับ Delete)
-$token = $_POST['csrf_token'] ?? ($_GET['csrf_token'] ?? '');
-if (function_exists('validateCSRFToken')) {
-    validateCSRFToken($token);
-}
-
-$action = $_POST['action'] ?? ($_GET['action'] ?? '');
+$action = $_POST['action'] ?? '';
 
 try {
-    if ($action == 'delete') {
-        $id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
-        if ($id && $id != $_SESSION['user_id']) { // ห้ามลบตัวเอง
-            $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$id]);
-            $_SESSION['swal_success'] = "ลบผู้ใช้งานเรียบร้อยแล้ว";
-        }
-    } 
-    elseif ($action == 'add' || $action == 'edit') {
-        $user_id = filter_input(INPUT_POST, 'user_id', FILTER_VALIDATE_INT);
+    if ($action === 'add') {
+        // --- เพิ่มผู้ใช้ ---
         $username = cleanInput($_POST['username']);
-        $password = $_POST['password'];
+        $password = $_POST['password']; // Raw password
+        $first_name = cleanInput($_POST['first_name']);
+        $last_name = cleanInput($_POST['last_name']);
         $role = cleanInput($_POST['role']);
-        $shelter_id = filter_input(INPUT_POST, 'shelter_id', FILTER_VALIDATE_INT) ?: null;
+        $shelter_id = !empty($_POST['shelter_id']) ? $_POST['shelter_id'] : null;
 
-        if ($action == 'add') {
-            // Check Duplicate
-            $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ?");
-            $stmt->execute([$username]);
-            if ($stmt->fetch()) {
-                die("Error: ชื่อผู้ใช้งานนี้มีอยู่ในระบบแล้ว");
-            }
-
-            $hash = password_hash($password, PASSWORD_DEFAULT);
-            $sql = "INSERT INTO users (username, password, role, shelter_id, created_at) VALUES (?, ?, ?, ?, NOW())";
-            $pdo->prepare($sql)->execute([$username, $hash, $role, $shelter_id]);
-            $_SESSION['swal_success'] = "เพิ่มผู้ใช้งานเรียบร้อยแล้ว";
-
-        } elseif ($action == 'edit') {
-            $params = [$username, $role, $shelter_id];
-            $sql = "UPDATE users SET username = ?, role = ?, shelter_id = ?";
-            
-            if (!empty($password)) {
-                $sql .= ", password = ?";
-                $params[] = password_hash($password, PASSWORD_DEFAULT);
-            }
-            
-            $sql .= " WHERE id = ?";
-            $params[] = $user_id;
-            
-            $pdo->prepare($sql)->execute($params);
-            $_SESSION['swal_success'] = "แก้ไขข้อมูลเรียบร้อยแล้ว";
+        // 1. Check Duplicate
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM users WHERE username = ?");
+        $stmt->execute([$username]);
+        if ($stmt->fetchColumn() > 0) {
+            throw new Exception("Username '$username' มีอยู่ในระบบแล้ว");
         }
+
+        // 2. Hash Password
+        if (empty($password)) { throw new Exception("กรุณาระบุรหัสผ่าน"); }
+        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+
+        // 3. Insert
+        $sql = "INSERT INTO users (username, password, first_name, last_name, role, shelter_id, created_at) 
+                VALUES (?, ?, ?, ?, ?, ?, NOW())";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$username, $hashed_password, $first_name, $last_name, $role, $shelter_id]);
+
+        $_SESSION['success'] = "เพิ่มผู้ใช้ '$username' เรียบร้อยแล้ว";
+
+    } elseif ($action === 'edit') {
+        // --- แก้ไขผู้ใช้ ---
+        $id = (int)$_POST['id'];
+        // Username มักไม่ให้แก้ (readOnly) แต่รับค่ามาเพื่อเช็ค
+        $password = $_POST['password'];
+        $first_name = cleanInput($_POST['first_name']);
+        $last_name = cleanInput($_POST['last_name']);
+        $role = cleanInput($_POST['role']);
+        $shelter_id = !empty($_POST['shelter_id']) ? $_POST['shelter_id'] : null;
+
+        // Build SQL Dynamic (เปลี่ยนรหัสผ่านเฉพาะเมื่อมีการกรอก)
+        $sql = "UPDATE users SET first_name = ?, last_name = ?, role = ?, shelter_id = ? ";
+        $params = [$first_name, $last_name, $role, $shelter_id];
+
+        if (!empty($password)) {
+            $sql .= ", password = ? ";
+            $params[] = password_hash($password, PASSWORD_DEFAULT);
+        }
+
+        $sql .= " WHERE id = ?";
+        $params[] = $id;
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        $_SESSION['success'] = "แก้ไขข้อมูลผู้ใช้งานเรียบร้อยแล้ว";
+
+    } elseif ($action === 'delete') {
+        // --- ลบผู้ใช้ ---
+        $id = (int)$_POST['id'];
+        
+        // Prevent deleting self
+        if ($id == $_SESSION['user_id']) {
+            throw new Exception("ไม่สามารถลบบัญชีของตนเองได้");
+        }
+
+        $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
+        $stmt->execute([$id]);
+
+        $_SESSION['success'] = "ลบผู้ใช้งานเรียบร้อยแล้ว";
     }
 
-} catch (PDOException $e) {
-    die("Database Error: " . $e->getMessage());
+} catch (Exception $e) {
+    $_SESSION['error'] = "เกิดข้อผิดพลาด: " . $e->getMessage();
 }
 
 header("Location: user_manager.php");
