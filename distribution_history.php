@@ -1,6 +1,6 @@
 <?php
 // distribution_history.php
-// ระบบดูประวัติการรับบริจาคและแจกจ่ายสิ่งของ (Inventory Logs)
+// ระบบดูประวัติการรับบริจาคและแจกจ่ายสิ่งของ (พร้อมระบบแบ่งหน้า Pagination 10 แถว)
 require_once 'config/db.php';
 require_once 'includes/functions.php';
 
@@ -11,89 +11,145 @@ if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit(); }
 $role = $_SESSION['role'];
 $my_shelter_id = $_SESSION['shelter_id'] ?? 0;
 
-// Shelter Filter: Admin เลือกได้, Staff บังคับศูนย์ตัวเอง
+// Shelter Filter
 $shelter_id = ($role === 'admin') ? ($_GET['shelter_id'] ?? '') : $my_shelter_id;
 
-$start_date = $_GET['start_date'] ?? date('Y-m-d', strtotime('-7 days')); // Default 7 วันย้อนหลัง
+// Date Filter (Default 30 days)
+$start_date = $_GET['start_date'] ?? date('Y-m-d', strtotime('-30 days')); 
 $end_date   = $_GET['end_date'] ?? date('Y-m-d');
 $type       = $_GET['type'] ?? ''; // in, out
 $search     = isset($_GET['search']) ? trim($_GET['search']) : '';
 
-// --- 2. Build Query ---
-$params = [];
-$where = " WHERE 1=1 ";
-
-// Filter by Shelter
-if ($shelter_id) {
-    $where .= " AND i.shelter_id = ? ";
-    $params[] = $shelter_id;
-}
-
-// Filter by Date
-if ($start_date && $end_date) {
-    $where .= " AND DATE(t.created_at) BETWEEN ? AND ? ";
-    $params[] = $start_date;
-    $params[] = $end_date;
-}
-
-// Filter by Type
-if ($type) {
-    $where .= " AND t.transaction_type = ? ";
-    $params[] = $type;
-}
-
-// Search (Item Name or User)
-if ($search) {
-    $where .= " AND (i.item_name LIKE ? OR u.username LIKE ?) ";
-    $params[] = "%$search%";
-    $params[] = "%$search%";
-}
-
-// Pagination Setup
+// --- Pagination Setup ---
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-$limit = 20;
+if ($page < 1) $page = 1;
+$limit = 10; // [แก้ไข] กำหนดให้แสดง 10 รายการต่อหน้า
 $offset = ($page - 1) * $limit;
 
-// Count Total
-$count_sql = "SELECT COUNT(*) 
-              FROM inventory_transactions t 
-              JOIN inventory i ON t.inventory_id = i.id 
-              LEFT JOIN users u ON t.user_id = u.id 
-              $where";
-$stmt_count = $pdo->prepare($count_sql);
-$stmt_count->execute($params);
-$total_records = $stmt_count->fetchColumn();
-$total_pages = ceil($total_records / $limit);
+// --- 2. Build Queries (UNION Approach) ---
 
-// Main Query
-// FIX: Removed the subquery that fetches evacuee_name via 'd.inventory_id' 
-// to prevent Fatal Error: Unknown column 'd.inventory_id' if DB is not updated.
-// To enable names, ensure DB has 'inventory_id' in 'distribution_logs' and uncomment the subquery.
-/*
-        (SELECT CONCAT(e.first_name, ' ', e.last_name) 
-         FROM distribution_logs d 
-         JOIN evacuees e ON d.evacuee_id = e.id 
-         WHERE d.inventory_id = t.inventory_id 
-           AND ABS(TIMESTAMPDIFF(SECOND, d.created_at, t.created_at)) <= 5 
-         LIMIT 1) as evacuee_name
-*/
-$sql = "SELECT t.*, i.item_name, i.unit, u.username, s.name as shelter_name
-        FROM inventory_transactions t
-        JOIN inventory i ON t.inventory_id = i.id
-        JOIN shelters s ON i.shelter_id = s.id
-        LEFT JOIN users u ON t.user_id = u.id
-        $where
-        ORDER BY t.created_at DESC
-        LIMIT $limit OFFSET $offset";
+// เงื่อนไขร่วม (Date)
+$date_cond_t = " AND t.created_at BETWEEN ? AND ? ";
+$date_cond_d = " AND d.given_at BETWEEN ? AND ? ";
 
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
-$logs = $stmt->fetchAll();
+// 2.1 Query Part 1: จาก Inventory Transactions
+$sql_trans = "SELECT 
+                t.created_at as log_date,
+                COALESCE(s.name, 'ไม่ระบุศูนย์') as shelter_name,
+                COALESCE(i.item_name, 'Unknown Item') as item_name,
+                t.transaction_type as type,
+                t.quantity,
+                COALESCE(i.unit, '-') as unit,
+                t.note as detail,
+                u.username,
+                'inventory_log' as source
+              FROM inventory_transactions t
+              LEFT JOIN inventory i ON t.inventory_id = i.id
+              LEFT JOIN shelters s ON i.shelter_id = s.id
+              LEFT JOIN users u ON t.user_id = u.id
+              WHERE 1=1 $date_cond_t";
+
+// 2.2 Query Part 2: จาก Distribution Logs
+$sql_dist = "SELECT 
+                d.given_at as log_date,
+                COALESCE(s.name, 'ไม่ระบุศูนย์/ภายนอก') as shelter_name,
+                d.item_name,
+                'out' as type,
+                d.quantity,
+                'ชิ้น/อัน' as unit,
+                CONCAT('ผู้รับ: ', COALESCE(e.first_name, '-'), ' ', COALESCE(e.last_name, '-')) as detail,
+                u.username,
+                'distribution_log' as source
+             FROM distribution_logs d
+             LEFT JOIN evacuees e ON d.evacuee_id = e.id
+             LEFT JOIN shelters s ON e.shelter_id = s.id
+             LEFT JOIN users u ON d.given_by = u.id
+             WHERE 1=1 $date_cond_d";
+
+// --- Apply Parameters & Filters ---
+
+$params_all = [];
+// Params for Trans
+$params_all[] = $start_date . " 00:00:00";
+$params_all[] = $end_date . " 23:59:59";
+
+// Filter Logic for Trans
+if ($shelter_id) {
+    $sql_trans .= " AND i.shelter_id = ? ";
+    $params_all[] = $shelter_id;
+}
+if ($type) {
+    $sql_trans .= " AND t.transaction_type = ? ";
+    $params_all[] = $type;
+}
+if ($search) {
+    $sql_trans .= " AND (i.item_name LIKE ? OR u.username LIKE ?) ";
+    $params_all[] = "%$search%";
+    $params_all[] = "%$search%";
+}
+
+// Params for Dist
+$params_all[] = $start_date . " 00:00:00";
+$params_all[] = $end_date . " 23:59:59";
+
+// Filter Logic for Dist
+if ($shelter_id) {
+    $sql_dist .= " AND e.shelter_id = ? ";
+    $params_all[] = $shelter_id;
+}
+if ($type == 'in') {
+    $sql_dist .= " AND 1=0 "; // Distribution is always OUT
+}
+if ($search) {
+    $sql_dist .= " AND (d.item_name LIKE ? OR u.username LIKE ?) ";
+    $params_all[] = "%$search%";
+    $params_all[] = "%$search%";
+}
+
+try {
+    // 1. Count Total Records First
+    $count_sql = "SELECT COUNT(*) FROM (
+                    $sql_trans
+                    UNION ALL
+                    $sql_dist
+                  ) as combined_count";
+    
+    $stmt_count = $pdo->prepare($count_sql);
+    $stmt_count->execute($params_all);
+    $total_records = $stmt_count->fetchColumn();
+    $total_pages = ceil($total_records / $limit);
+
+    // 2. Fetch Data with Limit & Offset
+    $final_sql = "SELECT * FROM (
+                    $sql_trans
+                    UNION ALL
+                    $sql_dist
+                  ) as combined_logs 
+                  ORDER BY log_date DESC 
+                  LIMIT $limit OFFSET $offset";
+
+    $stmt = $pdo->prepare($final_sql);
+    $stmt->execute($params_all);
+    $logs = $stmt->fetchAll();
+
+} catch (PDOException $e) {
+    $error_msg = "เกิดข้อผิดพลาด: " . $e->getMessage();
+    $logs = [];
+    $total_records = 0;
+    $total_pages = 0;
+}
 
 // Fetch Shelters for Filter (Admin)
 $shelters_list = [];
 if ($role === 'admin') {
     $shelters_list = $pdo->query("SELECT id, name FROM shelters WHERE status != 'closed'")->fetchAll();
+}
+
+// Helper function to build pagination links
+function getQueryString($page) {
+    $query = $_GET;
+    $query['page'] = $page;
+    return http_build_query($query);
 }
 ?>
 
@@ -111,17 +167,21 @@ if ($role === 'admin') {
 
 <?php include 'includes/header.php'; ?>
 
-<div class="container mt-4">
+<div class="container mt-4 mb-5">
     
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h3 class="fw-bold text-dark"><i class="fas fa-history text-primary me-2"></i>ประวัติการรับ-จ่ายสิ่งของ</h3>
-            <p class="text-muted small mb-0">ตรวจสอบรายการย้อนหลัง (Transaction Logs)</p>
+            <p class="text-muted small mb-0">รายการทั้งหมด: <?php echo number_format($total_records); ?> รายการ</p>
         </div>
         <a href="distribution_manager.php" class="btn btn-primary shadow-sm">
             <i class="fas fa-box-open me-2"></i> ไปหน้าจัดการสต็อก
         </a>
     </div>
+
+    <?php if (isset($error_msg)): ?>
+        <div class="alert alert-danger"><?php echo $error_msg; ?></div>
+    <?php endif; ?>
 
     <!-- Filter Card -->
     <div class="card shadow-sm border-0 mb-4">
@@ -160,9 +220,9 @@ if ($role === 'admin') {
                 </div>
 
                 <div class="col-md-3">
-                    <label class="form-label small fw-bold">ค้นหา (ชื่อของ/ผู้ทำรายการ)</label>
+                    <label class="form-label small fw-bold">ค้นหา</label>
                     <div class="input-group input-group-sm">
-                        <input type="text" name="search" class="form-control" placeholder="..." value="<?php echo htmlspecialchars($search); ?>">
+                        <input type="text" name="search" class="form-control" placeholder="ชื่อสินค้า/ผู้เกี่ยวข้อง..." value="<?php echo htmlspecialchars($search); ?>">
                         <button type="submit" class="btn btn-secondary"><i class="fas fa-search"></i></button>
                     </div>
                 </div>
@@ -182,32 +242,44 @@ if ($role === 'admin') {
                             <th>รายการสิ่งของ</th>
                             <th class="text-center">ประเภท</th>
                             <th class="text-end">จำนวน</th>
-                            <th class="ps-4">รายละเอียด / ผู้รับ / แหล่งที่มา</th>
-                            <th>ผู้ทำรายการ</th>
+                            <th class="ps-4">รายละเอียด</th>
+                            <th>ผู้บันทึก</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($logs)): ?>
-                            <tr><td colspan="7" class="text-center py-5 text-muted">ไม่พบข้อมูลตามเงื่อนไขที่ค้นหา</td></tr>
+                            <tr><td colspan="7" class="text-center py-5 text-muted">
+                                <i class="fas fa-folder-open fa-3x mb-3 text-secondary opacity-50"></i><br>
+                                ไม่พบข้อมูลตามเงื่อนไขที่ค้นหา
+                            </td></tr>
                         <?php else: ?>
                             <?php foreach ($logs as $row): 
-                                $isIn = $row['transaction_type'] == 'in';
+                                $isIn = $row['type'] == 'in';
                                 $badgeColor = $isIn ? 'bg-success' : 'bg-danger';
                                 $badgeIcon  = $isIn ? 'fa-arrow-down' : 'fa-arrow-up';
                                 $badgeText  = $isIn ? 'รับเข้า' : 'จ่ายออก';
                                 $qtyColor   = $isIn ? 'text-success' : 'text-danger';
                                 $qtySign    = $isIn ? '+' : '-';
+                                
+                                $sourceBadge = ($row['source'] == 'inventory_log') 
+                                    ? '<span class="badge bg-secondary text-white ms-1" style="font-size:0.6rem;">Stock</span>'
+                                    : '<span class="badge bg-info text-dark ms-1" style="font-size:0.6rem;">Distrib</span>';
                             ?>
                             <tr>
                                 <td class="ps-4 text-nowrap">
-                                    <div class="fw-bold"><?php echo date('d/m/Y', strtotime($row['created_at'])); ?></div>
-                                    <div class="small text-muted"><?php echo date('H:i', strtotime($row['created_at'])); ?> น.</div>
+                                    <div class="fw-bold"><?php echo date('d/m/Y', strtotime($row['log_date'])); ?></div>
+                                    <div class="small text-muted"><?php echo date('H:i', strtotime($row['log_date'])); ?> น.</div>
                                 </td>
                                 <td>
-                                    <span class="badge bg-light text-dark border"><?php echo htmlspecialchars($row['shelter_name']); ?></span>
+                                    <span class="badge bg-light text-dark border text-truncate" style="max-width: 150px;">
+                                        <?php echo htmlspecialchars($row['shelter_name']); ?>
+                                    </span>
                                 </td>
                                 <td>
-                                    <div class="fw-bold text-dark"><?php echo htmlspecialchars($row['item_name']); ?></div>
+                                    <div class="fw-bold text-dark">
+                                        <?php echo htmlspecialchars($row['item_name']); ?>
+                                        <?php echo $sourceBadge; ?>
+                                    </div>
                                 </td>
                                 <td class="text-center">
                                     <span class="badge <?php echo $badgeColor; ?> bg-opacity-75" style="width: 80px;">
@@ -220,20 +292,11 @@ if ($role === 'admin') {
                                 </td>
                                 <td class="ps-4">
                                     <?php 
-                                    if ($row['transaction_type'] == 'out') {
-                                        // Added check for existence of 'evacuee_name' key
-                                        if (isset($row['evacuee_name']) && $row['evacuee_name']) {
-                                            echo '<div class="text-primary"><i class="fas fa-user me-1"></i> <strong>' . htmlspecialchars($row['evacuee_name']) . '</strong></div>';
-                                            echo '<small class="text-muted">ผู้ประสบภัย</small>';
+                                        if ($row['detail']) {
+                                            echo '<div class="text-secondary small text-wrap" style="max-width: 300px;"><i class="fas fa-info-circle me-1"></i> ' . htmlspecialchars($row['detail']) . '</div>';
                                         } else {
-                                            echo '<span class="text-muted">แจกจ่ายทั่วไป</span>';
+                                            echo '<span class="text-muted small">-</span>';
                                         }
-                                    } else {
-                                        // Type IN
-                                        $source = $row['source'] ? htmlspecialchars($row['source']) : 'ไม่ระบุ';
-                                        echo '<div><i class="fas fa-hand-holding-heart me-1 text-success"></i> ' . $source . '</div>';
-                                        echo '<small class="text-muted">ผู้บริจาค/แหล่งที่มา</small>';
-                                    }
                                     ?>
                                 </td>
                                 <td>
@@ -248,28 +311,57 @@ if ($role === 'admin') {
                 </table>
             </div>
             
-            <!-- Pagination -->
+            <!-- Pagination UI -->
             <?php if ($total_pages > 1): ?>
-            <div class="p-3 border-top bg-light">
-                <?php 
-                    // สร้าง Pagination Link (Re-use function renderPagination หรือเขียนใหม่แบบง่าย)
-                    $queryParams = $_GET; 
-                    unset($queryParams['page']);
-                    $queryString = http_build_query($queryParams);
-                ?>
-                <nav>
-                    <ul class="pagination justify-content-center mb-0">
+            <div class="d-flex justify-content-between align-items-center p-3 border-top bg-white">
+                <div class="text-muted small">
+                    แสดงหน้า <?php echo $page; ?> จาก <?php echo $total_pages; ?> (ทั้งหมด <?php echo number_format($total_records); ?> รายการ)
+                </div>
+                <nav aria-label="Page navigation">
+                    <ul class="pagination pagination-sm mb-0">
+                        
+                        <!-- First Page -->
                         <li class="page-item <?php echo $page <= 1 ? 'disabled' : ''; ?>">
-                            <a class="page-link" href="?page=<?php echo $page-1; ?>&<?php echo $queryString; ?>">ก่อนหน้า</a>
+                            <a class="page-link" href="?<?php echo getQueryString(1); ?>" aria-label="First">
+                                <span aria-hidden="true">&laquo;&laquo;</span>
+                            </a>
                         </li>
-                        <?php for($i=1; $i<=$total_pages; $i++): ?>
-                            <li class="page-item <?php echo $page == $i ? 'active' : ''; ?>">
-                                <a class="page-link" href="?page=<?php echo $i; ?>&<?php echo $queryString; ?>"><?php echo $i; ?></a>
-                            </li>
-                        <?php endfor; ?>
+
+                        <!-- Previous -->
+                        <li class="page-item <?php echo $page <= 1 ? 'disabled' : ''; ?>">
+                            <a class="page-link" href="?<?php echo getQueryString($page - 1); ?>" aria-label="Previous">
+                                <span aria-hidden="true">&laquo;</span>
+                            </a>
+                        </li>
+
+                        <!-- Page Numbers (Show +/- 2 pages) -->
+                        <?php
+                        $range = 2;
+                        $initial_num = $page - $range;
+                        $condition_limit_num = ($page + $range)  + 1;
+
+                        for ($i = $initial_num; $i < $condition_limit_num; $i++) {
+                            if (($i > 0) && ($i <= $total_pages)) {
+                                $active = ($page == $i) ? 'active' : '';
+                                echo '<li class="page-item '.$active.'"><a class="page-link" href="?'.getQueryString($i).'">'.$i.'</a></li>';
+                            }
+                        }
+                        ?>
+
+                        <!-- Next -->
                         <li class="page-item <?php echo $page >= $total_pages ? 'disabled' : ''; ?>">
-                            <a class="page-link" href="?page=<?php echo $page+1; ?>&<?php echo $queryString; ?>">ถัดไป</a>
+                            <a class="page-link" href="?<?php echo getQueryString($page + 1); ?>" aria-label="Next">
+                                <span aria-hidden="true">&raquo;</span>
+                            </a>
                         </li>
+
+                        <!-- Last Page -->
+                        <li class="page-item <?php echo $page >= $total_pages ? 'disabled' : ''; ?>">
+                            <a class="page-link" href="?<?php echo getQueryString($total_pages); ?>" aria-label="Last">
+                                <span aria-hidden="true">&raquo;&raquo;</span>
+                            </a>
+                        </li>
+
                     </ul>
                 </nav>
             </div>

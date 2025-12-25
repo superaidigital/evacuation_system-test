@@ -1,536 +1,325 @@
 <?php
-/**
- * Distribution Manager (หน้าจอเบิกจ่ายสิ่งของช่วยเหลือ)
- * Version: Compatible (รองรับทั้ง $pdo และ $db)
- */
-
-// 1. Start Session
-if (session_status() == PHP_SESSION_NONE) { session_start(); }
-
-// 2. Include Config & Functions
+// distribution_manager.php
+// หน้าแจกจ่ายสิ่งของ (ตัดสต็อก) - แก้ไขปัญหาเลือกศูนย์แล้ว Error
 require_once 'config/db.php';
 require_once 'includes/functions.php';
 
-// ตรวจสอบสิทธิ์การเข้าใช้งาน
-if (!isset($_SESSION['user_id'])) { 
-    header("Location: login.php"); 
-    exit(); 
-}
+if (session_status() == PHP_SESSION_NONE) { session_start(); }
+if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit(); }
 
-// ----------------------------------------------------------------------------------
-// [SMART CONNECTION] ระบบเชื่อมต่อฐานข้อมูลอัจฉริยะ
-// แก้ปัญหา Error: Undefined variable $db หรือ $pdo
-// ----------------------------------------------------------------------------------
-if (!isset($pdo)) {
-    // กรณีใช้ Config แบบ Class ($db)
-    if (isset($db) && property_exists($db, 'pdo')) {
-        $pdo = $db->pdo;
-    } 
-    // กรณีไม่มีตัวแปรใดๆ เลย (Error)
-    else {
-        die("<div class='alert alert-danger'>
-                <h3>Database Error</h3>
-                ไม่พบตัวแปรเชื่อมต่อฐานข้อมูล (\$pdo หรือ \$db) 
-                กรุณาตรวจสอบไฟล์ <code>config/db.php</code>
-             </div>");
-    }
-}
-// ----------------------------------------------------------------------------------
+$role = $_SESSION['role'];
+$my_shelter_id = $_SESSION['shelter_id'] ?? 0;
+// รับค่า shelter_id จาก GET (URL)
+$shelter_id = ($role === 'admin') ? ($_GET['shelter_id'] ?? '') : $my_shelter_id;
 
-// 3. Determine Shelter ID (เลือกศูนย์พักพิง)
-// ลำดับ: GET -> SESSION -> 0
-$shelter_id = isset($_GET['shelter_id']) ? (int)$_GET['shelter_id'] : ($_SESSION['shelter_id'] ?? 0);
-$user_role = $_SESSION['role'] ?? 'staff';
-$can_switch_shelter = ($user_role === 'admin');
-
-// 4. Fetch Shelters (สำหรับ Admin เลือกศูนย์)
+// Fetch Shelters (Admin Only)
 $shelters = [];
-if ($can_switch_shelter) {
-    try {
-        $stmt_s = $pdo->query("SELECT id, name FROM shelters WHERE status != 'closed' ORDER BY name");
-        if ($stmt_s) {
-            $shelters = $stmt_s->fetchAll(PDO::FETCH_ASSOC);
-            // ถ้ายังไม่เลือกศูนย์ ให้เลือกอันแรกอัตโนมัติ
-            if (!$shelter_id && count($shelters) > 0) {
-                $shelter_id = $shelters[0]['id'];
-            }
-        }
-    } catch (PDOException $e) { /* Table shelters might not exist yet */ }
-} else {
-    // User ทั่วไป บังคับใช้ศูนย์ของตนเอง
-    if (isset($_SESSION['shelter_id'])) {
-        $shelter_id = $_SESSION['shelter_id'];
-    }
+if ($role === 'admin') {
+    $shelters = $pdo->query("SELECT id, name FROM shelters WHERE status != 'closed'")->fetchAll();
 }
 
-// 5. Fetch Inventory Data (ดึงของในคลัง)
-$inventory = [];
-if ($shelter_id) {
-    try {
-        // ใช้ Prepared Statement ป้องกัน SQL Injection
-        // ดึงเฉพาะของที่มีในศูนย์นี้
-        $sql = "SELECT * FROM inventory WHERE shelter_id = ? ORDER BY quantity DESC";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$shelter_id]);
-        $inventory = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (PDOException $e) {
-        error_log("Inventory Error: " . $e->getMessage());
-    }
+// Fetch Items available in this shelter
+$items = [];
+if ($shelter_id || $my_shelter_id) {
+    $sid = $shelter_id ? $shelter_id : $my_shelter_id;
+    // ดึงเฉพาะสินค้าที่มีของ (quantity > 0)
+    $stmt = $pdo->prepare("SELECT * FROM inventory WHERE shelter_id = ? AND quantity > 0 ORDER BY item_name");
+    $stmt->execute([$sid]);
+    $items = $stmt->fetchAll();
 }
-
-// 6. Handle Search Evacuee (ค้นหาผู้ประสบภัยที่จะรับของ)
-$evacuee = null;
-$search_key = isset($_GET['search_evacuee']) ? trim($_GET['search_evacuee']) : '';
-
-if ($search_key && $shelter_id) {
-    try {
-        // ค้นหาจาก ID Card หรือ ชื่อ-นามสกุล
-        $sql_ev = "SELECT * FROM evacuees 
-                   WHERE shelter_id = ? 
-                   AND (status != 'check_out' OR status IS NULL) 
-                   AND (id_card LIKE ? OR first_name LIKE ? OR last_name LIKE ?) 
-                   LIMIT 1";
-        $stmt_ev = $pdo->prepare($sql_ev);
-        $term = "%$search_key%";
-        $stmt_ev->execute([$shelter_id, $term, $term, $term]);
-        $evacuee = $stmt_ev->fetch(PDO::FETCH_ASSOC);
-    } catch (PDOException $e) {
-        error_log("Search Error: " . $e->getMessage());
-    }
-}
-
-$page_title = "บริหารจัดการสิ่งของ";
 ?>
 
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo $page_title; ?></title>
-    <!-- Bootstrap 5 CSS -->
+    <title>บันทึกการแจกจ่ายสิ่งของ</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Font Awesome -->
+    <!-- Select2 CSS -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/css/select2.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/select2-bootstrap-5-theme/1.3.0/select2-bootstrap-5-theme.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- SweetAlert2 -->
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="assets/css/style.css">
-    
     <style>
-        .card-stock { border-left: 4px solid #3b82f6; transition: transform 0.2s; }
-        .card-stock:hover { transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .bg-low-stock { background-color: #fff1f2 !important; }
-        .text-low-stock { color: #e11d48 !important; font-weight: bold; }
-        .modal-backdrop { z-index: 1040 !important; }
-        .modal { z-index: 1050 !important; }
-        .item-icon { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: #f1f5f9; border-radius: 50%; color: #64748b; }
+        .card-header-dist { background: linear-gradient(135deg, #d32f2f 0%, #ef5350 100%); color: white; }
+        .form-section-title { border-left: 5px solid #d32f2f; padding-left: 10px; font-weight: bold; margin-bottom: 15px; color: #444; }
+        .stock-badge { font-size: 0.9rem; }
     </style>
 </head>
 <body class="bg-light">
 
 <?php include 'includes/header.php'; ?>
 
-<!-- Alert Handler -->
-<?php if (isset($_SESSION['success']) || isset($_SESSION['swal_success'])): ?>
-    <script>
-        Swal.fire({
-            icon: 'success',
-            title: 'สำเร็จ',
-            text: '<?php echo $_SESSION['success'] ?? $_SESSION['swal_success']; ?>',
-            timer: 2000,
-            showConfirmButton: false
-        });
-    </script>
-    <?php unset($_SESSION['success'], $_SESSION['swal_success']); ?>
-<?php endif; ?>
-
-<?php if (isset($_SESSION['error']) || isset($_SESSION['swal_error'])): ?>
-    <script>
-        Swal.fire({
-            icon: 'error',
-            title: 'เกิดข้อผิดพลาด',
-            text: '<?php echo $_SESSION['error'] ?? $_SESSION['swal_error']; ?>'
-        });
-    </script>
-    <?php unset($_SESSION['error'], $_SESSION['swal_error']); ?>
-<?php endif; ?>
-
 <div class="container mt-4 mb-5">
 
-    <!-- Header & Shelter Selector -->
-    <div class="d-flex flex-column flex-md-row justify-content-between align-items-center mb-4 gap-3 bg-white p-3 rounded shadow-sm border-bottom border-primary border-3">
-        <div>
-            <h4 class="fw-bold text-primary mb-1"><i class="fas fa-boxes-stacked me-2"></i>บริหารจัดการสิ่งของ</h4>
-            <p class="text-muted small mb-0">จัดการคลังสินค้า รับบริจาค และแจกจ่ายผู้ประสบภัย</p>
-        </div>
-        
-        <?php if ($can_switch_shelter): ?>
-        <form action="" method="GET" class="d-flex gap-2 align-items-center">
-            <label class="fw-bold text-muted small text-nowrap">เลือกศูนย์:</label>
-            <select name="shelter_id" class="form-select form-select-sm w-auto shadow-sm" onchange="this.form.submit()">
-                <option value="">-- กรุณาเลือก --</option>
-                <?php foreach ($shelters as $s): ?>
-                    <option value="<?php echo $s['id']; ?>" <?php echo $shelter_id == $s['id'] ? 'selected' : ''; ?>>
-                        <?php echo htmlspecialchars($s['name']); ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </form>
-        <?php else: ?>
-            <div class="badge bg-primary text-white fs-6 px-3 py-2 shadow-sm">
-                <i class="fas fa-campground"></i> ศูนย์: <?php echo htmlspecialchars($_SESSION['shelter_name'] ?? $shelter_id); ?>
-            </div>
-        <?php endif; ?>
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="inventory_list.php">คลังสินค้า</a></li>
+            <li class="breadcrumb-item active" aria-current="page">แจกจ่าย/ตัดสต็อก</li>
+        </ol>
+    </nav>
+
+    <!-- Header Area -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3 class="fw-bold text-dark"><i class="fas fa-hand-holding-heart text-danger me-2"></i>บันทึกการแจกจ่าย</h3>
+        <a href="distribution_history.php" class="btn btn-outline-secondary btn-sm">
+            <i class="fas fa-history me-1"></i> ดูประวัติการแจก
+        </a>
     </div>
 
-    <?php if (!$shelter_id): ?>
-        <div class="alert alert-warning text-center shadow-sm p-5 mt-5">
-            <i class="fas fa-exclamation-triangle fa-3x mb-3 text-warning"></i>
-            <h4>กรุณาเลือกศูนย์พักพิง</h4>
-            <p class="text-muted">โปรดเลือกศูนย์พักพิงที่ต้องการจัดการข้อมูลจากเมนูด้านบน</p>
+    <!-- Alerts -->
+    <?php if(isset($_SESSION['success'])): ?>
+        <div class="alert alert-success alert-dismissible fade show">
+            <i class="fas fa-check-circle me-2"></i> <?php echo $_SESSION['success']; unset($_SESSION['success']); ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
-    <?php else: ?>
-
-    <div class="row g-4">
-        <!-- LEFT: Inventory List -->
-        <div class="col-lg-7">
-            <div class="card shadow-sm h-100 border-0">
-                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-bottom">
-                    <h5 class="mb-0 fw-bold text-dark"><i class="fas fa-clipboard-list text-primary me-2"></i>คลังสินค้า (Inventory)</h5>
-                    <button class="btn btn-sm btn-success fw-bold shadow-sm px-3" id="btnDonation">
-                        <i class="fas fa-plus-circle me-1"></i> รับบริจาค / เพิ่มของ
-                    </button>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-hover align-middle mb-0">
-                            <thead class="table-light">
-                                <tr class="text-uppercase small text-muted">
-                                    <th class="ps-3 py-3">ชื่อรายการ</th>
-                                    <th>หมวดหมู่</th>
-                                    <th class="text-center">คงเหลือ</th>
-                                    <th class="text-end pe-3">จัดการ</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if(empty($inventory)): ?>
-                                    <tr><td colspan="4" class="text-center py-5 text-muted"><i class="fas fa-box-open fa-2x mb-2"></i><br>ยังไม่มีรายการสิ่งของในคลัง</td></tr>
-                                <?php else: ?>
-                                    <?php foreach ($inventory as $item): 
-                                        $qty = (int)$item['quantity'];
-                                        $low_stock = $qty < 10;
-                                        $category = isset($item['category']) ? $item['category'] : 'ทั่วไป';
-                                        
-                                        // Icon logic
-                                        $icon = 'fa-box';
-                                        if(strpos($category, 'food') !== false) $icon = 'fa-utensils';
-                                        elseif(strpos($category, 'medicine') !== false) $icon = 'fa-briefcase-medical';
-                                        elseif(strpos($category, 'clothes') !== false) $icon = 'fa-tshirt';
-                                    ?>
-                                    <tr class="<?php echo $low_stock ? 'bg-low-stock' : ''; ?>">
-                                        <td class="ps-3">
-                                            <div class="d-flex align-items-center">
-                                                <div class="item-icon me-3 <?php echo $low_stock ? 'bg-danger bg-opacity-10 text-danger' : ''; ?>">
-                                                    <i class="fas <?php echo $icon; ?>"></i>
-                                                </div>
-                                                <div>
-                                                    <div class="fw-bold text-dark"><?php echo htmlspecialchars($item['item_name']); ?></div>
-                                                    <div class="small text-muted"><?php echo htmlspecialchars($item['unit']); ?></div>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td><span class="badge bg-secondary bg-opacity-10 text-secondary border"><?php echo htmlspecialchars($category); ?></span></td>
-                                        <td class="text-center">
-                                            <span class="fs-5 <?php echo $low_stock ? 'text-low-stock' : 'text-primary fw-bold'; ?>">
-                                                <?php echo number_format($qty); ?>
-                                            </span>
-                                            <?php if($low_stock): ?>
-                                                <br><small class="text-danger" style="font-size: 0.7em;">ใกล้หมด</small>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td class="text-end pe-3">
-                                            <a href="distribution_history.php?inventory_id=<?php echo $item['id']; ?>" class="btn btn-sm btn-outline-secondary" title="ดูประวัติ">
-                                                <i class="fas fa-history"></i>
-                                            </a>
-                                        </td>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
+    <?php endif; ?>
+    <?php if(isset($_SESSION['error'])): ?>
+        <div class="alert alert-danger alert-dismissible fade show">
+            <i class="fas fa-exclamation-circle me-2"></i> <?php echo $_SESSION['error']; unset($_SESSION['error']); ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
+    <?php endif; ?>
 
-        <!-- RIGHT: Distribute Panel -->
-        <div class="col-lg-5">
-            
-            <!-- 1. Search Evacuee -->
-            <div class="card shadow-sm border-0 mb-4 bg-primary bg-opacity-10">
-                <div class="card-body">
-                    <h5 class="fw-bold text-primary mb-3"><i class="fas fa-hand-holding-heart me-2"></i>แจกจ่ายสิ่งของ</h5>
+    <div class="row justify-content-center">
+        <div class="col-lg-10">
+            <div class="card shadow border-0 rounded-3">
+                <div class="card-header card-header-dist py-3">
+                    <h5 class="mb-0"><i class="fas fa-edit me-2"></i>ฟอร์มตัดเบิกสินค้าออกจากคลัง</h5>
+                </div>
+                <div class="card-body p-4">
                     
-                    <form action="" method="GET" class="d-flex gap-2 mb-3">
-                        <input type="hidden" name="shelter_id" value="<?php echo $shelter_id; ?>">
-                        <input type="text" name="search_evacuee" class="form-control" placeholder="ค้นหา: ชื่อ หรือ เลขบัตร..." value="<?php echo htmlspecialchars($search_key); ?>" autofocus>
-                        <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i></button>
-                    </form>
-
-                    <?php if ($search_key && !$evacuee): ?>
-                        <div class="alert alert-danger py-2 d-flex align-items-center shadow-sm">
-                            <i class="fas fa-times-circle me-2"></i> <small>ไม่พบข้อมูลผู้ประสบภัย (หรือ Check-out แล้ว)</small>
+                    <form action="distribution_save.php" method="POST" id="distForm">
+                        
+                        <!-- 1. เลือกศูนย์ (Admin Only) -->
+                        <?php if ($role === 'admin'): ?>
+                        <div class="mb-4 bg-light p-3 rounded border">
+                            <label class="form-label fw-bold">ศูนย์พักพิงต้นทาง <span class="text-danger">*</span></label>
+                            <!-- [FIX] เปลี่ยน onchange เป็นการ Redirect หน้าเว็บ แทนการ Submit Form -->
+                            <select name="shelter_id" id="shelter_select" class="form-select" onchange="window.location.href='?shelter_id='+this.value">
+                                <option value="">-- กรุณาเลือกศูนย์ --</option>
+                                <?php foreach ($shelters as $s): ?>
+                                    <option value="<?php echo $s['id']; ?>" <?php echo $shelter_id == $s['id'] ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($s['name']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <?php if(!$shelter_id): ?>
+                                <div class="text-danger mt-2 small"><i class="fas fa-exclamation-triangle"></i> ต้องเลือกศูนย์ก่อนเพื่อโหลดรายการสินค้า</div>
+                            <?php endif; ?>
                         </div>
-                    <?php endif; ?>
+                        <?php else: ?>
+                            <input type="hidden" name="shelter_id" value="<?php echo $my_shelter_id; ?>">
+                        <?php endif; ?>
 
-                    <?php if ($evacuee): ?>
-                        <div class="bg-white p-3 rounded shadow-sm border border-primary position-relative">
-                            <span class="position-absolute top-0 end-0 badge bg-success m-2">พบข้อมูล</span>
-                            <div class="d-flex align-items-center mb-3">
-                                <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display:flex; justify-content:center; align-items:center;">
-                                    <i class="fas fa-user fa-lg"></i>
-                                </div>
-                                <div>
-                                    <div class="fw-bold fs-5"><?php echo htmlspecialchars($evacuee['first_name'] . ' ' . $evacuee['last_name']); ?></div>
-                                    <div class="small text-muted">
-                                        <i class="fas fa-id-card me-1"></i> 
-                                        <?php echo function_exists('maskIDCard') ? maskIDCard($evacuee['id_card']) : htmlspecialchars($evacuee['id_card']); ?>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <hr class="my-3 border-secondary opacity-25">
-                            
-                            <!-- Distribute Form -->
-                            <form action="distribution_save.php" method="POST">
-                                <input type="hidden" name="action" value="distribute">
-                                <input type="hidden" name="shelter_id" value="<?php echo $shelter_id; ?>">
-                                <input type="hidden" name="evacuee_id" value="<?php echo $evacuee['id']; ?>">
-                                <?php if(function_exists('generateCSRFToken')): ?>
-                                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                                <?php endif; ?>
-
-                                <div class="mb-3">
-                                    <label class="form-label small text-muted fw-bold text-uppercase">เลือกสิ่งของที่จะแจก</label>
-                                    <select name="inventory_id" id="dist_inv_id" class="form-select" required>
-                                        <option value="">-- เลือกรายการ --</option>
-                                        <?php foreach ($inventory as $item): ?>
-                                            <?php if($item['quantity'] > 0): ?>
-                                            <option value="<?php echo $item['id']; ?>" data-max="<?php echo $item['quantity']; ?>" data-unit="<?php echo $item['unit']; ?>">
-                                                <?php echo htmlspecialchars($item['item_name']); ?> (เหลือ <?php echo $item['quantity']; ?> <?php echo $item['unit']; ?>)
+                        <?php if ($shelter_id || $my_shelter_id): ?>
+                        
+                        <!-- Section 1: ข้อมูลสินค้า -->
+                        <div class="mb-5">
+                            <div class="form-section-title">1. รายละเอียดสินค้าที่เบิก</div>
+                            <div class="row g-3">
+                                <div class="col-md-7">
+                                    <label class="form-label fw-bold">เลือกสินค้า <span class="text-danger">*</span></label>
+                                    <select name="inventory_id" id="inventory_select" class="form-select select2" required>
+                                        <option value="">-- ค้นหาชื่อสินค้า --</option>
+                                        <?php foreach ($items as $itm): ?>
+                                            <option value="<?php echo $itm['id']; ?>" data-unit="<?php echo $itm['unit']; ?>" data-qty="<?php echo $itm['quantity']; ?>">
+                                                <?php echo htmlspecialchars($itm['item_name']); ?> (คงเหลือ: <?php echo number_format($itm['quantity']); ?> <?php echo $itm['unit']; ?>)
                                             </option>
-                                            <?php endif; ?>
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
-
-                                <div class="mb-4">
-                                    <label class="form-label small text-muted fw-bold text-uppercase">จำนวน</label>
+                                <div class="col-md-5">
+                                    <label class="form-label fw-bold">จำนวนที่เบิก <span class="text-danger">*</span></label>
                                     <div class="input-group">
-                                        <button class="btn btn-outline-secondary" type="button" onclick="stepDown('qty')"><i class="fas fa-minus"></i></button>
-                                        <input type="number" name="quantity" id="qty" class="form-control text-center fw-bold text-primary" value="1" min="1" required>
-                                        <span class="input-group-text bg-light" id="qty_unit_label">หน่วย</span>
-                                        <button class="btn btn-outline-secondary" type="button" onclick="stepUp('qty')"><i class="fas fa-plus"></i></button>
+                                        <input type="number" name="quantity" id="dist_qty" class="form-control fw-bold text-primary" min="1" required placeholder="0">
+                                        <span class="input-group-text bg-white text-secondary" id="unit_label">หน่วย</span>
                                     </div>
-                                    <div id="max_qty_hint" class="form-text text-end text-danger d-none small mt-1"></div>
-                                </div>
-
-                                <button type="submit" class="btn btn-primary w-100 fw-bold shadow-sm py-2">
-                                    <i class="fas fa-check-circle me-1"></i> ยืนยันการแจก
-                                </button>
-                            </form>
-                        </div>
-                    <?php else: ?>
-                        <div class="text-center text-muted py-4">
-                            <i class="fas fa-search fa-2x mb-2 opacity-50"></i>
-                            <p class="small mb-0">ค้นหาผู้ประสบภัยเพื่อเริ่มแจกจ่าย</p>
-                        </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-
-            <!-- 2. Recent History (Log Preview) -->
-            <div class="card shadow-sm border-0">
-                <div class="card-header bg-white py-2 border-bottom">
-                    <small class="fw-bold text-muted text-uppercase"><i class="fas fa-history me-1"></i> ประวัติความเคลื่อนไหวล่าสุด</small>
-                </div>
-                <div class="list-group list-group-flush small">
-                    <?php
-                    // Display Recent Logs
-                    try {
-                        $sql_log = "SELECT d.*, i.item_name, i.unit 
-                                    FROM distributions d 
-                                    JOIN inventory i ON d.inventory_id = i.id 
-                                    WHERE i.shelter_id = ? 
-                                    ORDER BY d.created_at DESC LIMIT 5";
-                        $stmt_log = $pdo->prepare($sql_log);
-                        $stmt_log->execute([$shelter_id]);
-                        
-                        $count = 0;
-                        while($log = $stmt_log->fetch(PDO::FETCH_ASSOC)):
-                            $count++;
-                    ?>
-                        <div class="list-group-item d-flex justify-content-between align-items-center">
-                            <div>
-                                <span class="text-danger me-2"><i class="fas fa-arrow-up"></i></span>
-                                <span class="fw-bold text-dark"><?php echo htmlspecialchars($log['item_name']); ?></span>
-                                <div class="text-muted" style="font-size: 0.8em;">
-                                    <?php echo date('d/m/Y H:i', strtotime($log['created_at'])); ?>
+                                    <div class="text-end mt-1">
+                                        <small class="text-muted">คงเหลือในคลัง: <span id="current_stock" class="fw-bold text-success">-</span></small>
+                                    </div>
                                 </div>
                             </div>
-                            <span class="badge bg-light text-dark border rounded-pill px-3">
-                                - <?php echo number_format($log['quantity']); ?> <?php echo htmlspecialchars($log['unit']); ?>
-                            </span>
+                            <!-- Ref No -->
+                            <div class="row mt-2">
+                                <div class="col-md-6">
+                                    <label class="form-label text-secondary small">เลขที่เอกสาร/ใบเบิก (Ref No.)</label>
+                                    <input type="text" name="ref_no" class="form-control form-control-sm" placeholder="เช่น DOC-2023/001 (ถ้ามี)">
+                                </div>
+                            </div>
                         </div>
-                    <?php 
-                        endwhile;
-                        if ($count == 0) {
-                            echo '<div class="p-4 text-center text-muted"><i class="fas fa-clipboard-check mb-2"></i><br>ยังไม่มีประวัติการแจกจ่าย</div>';
-                        }
-                    } catch (PDOException $e) {
-                         // Fallback logic if table doesn't exist yet
-                         echo '<div class="p-3 text-center text-muted small">ยังไม่มีข้อมูล</div>';
-                    }
-                    ?>
-                </div>
-                <div class="card-footer bg-white text-center py-2">
-                    <a href="distribution_history.php?shelter_id=<?php echo $shelter_id; ?>" class="btn btn-sm btn-link text-decoration-none">ดูประวัติทั้งหมด</a>
+
+                        <!-- Section 2: ข้อมูลผู้รับ -->
+                        <div class="mb-4">
+                            <div class="form-section-title">2. ข้อมูลผู้รับของ/ปลายทาง</div>
+                            
+                            <!-- Toggle Type -->
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">ประเภทผู้รับ</label>
+                                <div class="btn-group w-100" role="group">
+                                    <input type="radio" class="btn-check" name="recipient_type" id="type_evacuee" value="evacuee" checked onchange="toggleRecipient('evacuee')">
+                                    <label class="btn btn-outline-danger" for="type_evacuee"><i class="fas fa-user me-1"></i> ผู้ประสบภัย (รายบุคคล)</label>
+
+                                    <input type="radio" class="btn-check" name="recipient_type" id="type_general" value="general" onchange="toggleRecipient('general')">
+                                    <label class="btn btn-outline-secondary" for="type_general"><i class="fas fa-users me-1"></i> หน่วยงาน / ส่วนกลาง</label>
+                                </div>
+                            </div>
+
+                            <!-- Case A: Evacuee -->
+                            <div id="evacuee_section" class="card bg-light border-0 p-3">
+                                <div class="row g-3">
+                                    <div class="col-md-12">
+                                        <label class="form-label fw-bold">ค้นหาชื่อผู้ประสบภัย <span class="text-danger">*</span></label>
+                                        <select name="evacuee_id" id="evacuee_id_select" class="form-select select2-ajax" style="width: 100%;">
+                                            <option value="">-- พิมพ์ชื่อเพื่อค้นหา --</option>
+                                        </select>
+                                        <div class="form-text small">พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อค้นหาในฐานข้อมูลทะเบียน</div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <label class="form-label text-secondary small">ชื่อผู้มารับแทน (กรณีเจ้าตัวไม่มารับเอง)</label>
+                                        <input type="text" name="receiver_name_ev" class="form-control" placeholder="ระบุชื่อ-สกุล ผู้รับแทน">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Case B: General/Group -->
+                            <div id="general_section" class="card bg-light border-0 p-3 d-none">
+                                <div class="row g-3">
+                                    <div class="col-md-12">
+                                        <label class="form-label fw-bold">ชื่อหน่วยงาน / กลุ่มเป้าหมาย <span class="text-danger">*</span></label>
+                                        <input type="text" name="recipient_group" id="recipient_group_input" class="form-control" placeholder="เช่น ครัวกลาง, ทีมแพทย์อาสา, จุดสกัดที่ 1">
+                                    </div>
+                                    <div class="col-md-12">
+                                        <label class="form-label text-secondary small">ชื่อผู้เบิก/เจ้าหน้าที่รับผิดชอบ</label>
+                                        <input type="text" name="receiver_name_gen" class="form-control" placeholder="ระบุชื่อเจ้าหน้าที่ผู้ดำเนินการเบิก">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Section 3: Note -->
+                        <div class="mb-4">
+                            <label class="form-label">หมายเหตุเพิ่มเติม</label>
+                            <textarea name="note" class="form-control" rows="2" placeholder="รายละเอียดอื่นๆ (ถ้ามี)..."></textarea>
+                        </div>
+
+                        <hr>
+
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="inventory_list.php" class="btn btn-light border me-md-2">ยกเลิก</a>
+                            <button type="submit" class="btn btn-danger btn-lg px-5 shadow-sm" onclick="return confirm('ยืนยันการตัดสต็อก?');">
+                                <i class="fas fa-save me-2"></i> บันทึกการแจกจ่าย
+                            </button>
+                        </div>
+
+                        <?php endif; ?>
+                    </form>
                 </div>
             </div>
-
         </div>
     </div>
-    <?php endif; ?>
-
 </div>
 
-<!-- Modal: Add Donation (รับบริจาค) -->
-<div class="modal fade" id="donationModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <form action="distribution_save.php" method="POST">
-            <div class="modal-content shadow">
-                <div class="modal-header bg-success text-white">
-                    <h5 class="modal-title"><i class="fas fa-box-open me-2"></i>รับบริจาค / เพิ่มสต็อก</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <input type="hidden" name="action" value="add_stock">
-                    <input type="hidden" name="shelter_id" value="<?php echo $shelter_id; ?>">
-                    <?php if(function_exists('generateCSRFToken')): ?>
-                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                    <?php endif; ?>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">ชื่อสิ่งของ <span class="text-danger">*</span></label>
-                        <div class="input-group">
-                            <span class="input-group-text"><i class="fas fa-tag"></i></span>
-                            <input type="text" name="item_name" class="form-control" list="item_suggestions" required placeholder="ระบุชื่อสิ่งของ..." autocomplete="off">
-                        </div>
-                        <datalist id="item_suggestions">
-                            <option value="น้ำดื่ม (แพ็ค)">
-                            <option value="ข้าวสาร (ถุง 5kg)">
-                            <option value="บะหมี่กึ่งสำเร็จรูป (กล่อง)">
-                            <option value="ปลากระป๋อง (กระป๋อง)">
-                            <option value="ยาสามัญประจำบ้าน (ชุด)">
-                            <option value="ผ้าห่ม (ผืน)">
-                            <option value="มุ้ง (หลัง)">
-                            <option value="ยากันยุง (กล่อง)">
-                        </datalist>
-                    </div>
-
-                    <div class="row g-2 mb-3">
-                        <div class="col-6">
-                            <label class="form-label fw-bold">หมวดหมู่</label>
-                            <select name="category" class="form-select">
-                                <option value="general" selected>ของใช้ทั่วไป</option>
-                                <option value="food">อาหาร/เครื่องดื่ม</option>
-                                <option value="medicine">ยา/เวชภัณฑ์</option>
-                                <option value="clothes">เครื่องนุ่งห่ม</option>
-                                <option value="baby">สำหรับเด็ก/ทารก</option>
-                            </select>
-                        </div>
-                        <div class="col-6">
-                            <label class="form-label fw-bold">หน่วยนับ <span class="text-danger">*</span></label>
-                            <input type="text" name="unit" class="form-control" placeholder="เช่น ชิ้น, แพ็ค" required>
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">จำนวนที่รับเข้า <span class="text-danger">*</span></label>
-                        <input type="number" name="quantity" class="form-control form-control-lg text-center text-success fw-bold" required min="1" placeholder="0">
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">แหล่งที่มา / ผู้บริจาค</label>
-                        <input type="text" name="source" class="form-control" placeholder="เช่น กาชาด, คุณใจดี, งบอบจ.">
-                    </div>
-                </div>
-                <div class="modal-footer bg-light">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
-                    <button type="submit" class="btn btn-success fw-bold px-4"><i class="fas fa-save me-1"></i> บันทึกรับของ</button>
-                </div>
-            </div>
-        </form>
-    </div>
-</div>
-
-<?php include 'includes/footer.php'; ?>
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/select2/4.0.13/js/select2.min.js"></script>
 <script>
-    document.addEventListener("DOMContentLoaded", function () {
-        // Fix for "Dim Screen / Can't Click": Move Modals to Body
-        const modals = document.querySelectorAll('.modal');
-        modals.forEach(modal => {
-            document.body.appendChild(modal);
+    $(document).ready(function() {
+        // Init Select2 for Items
+        $('#inventory_select').select2({
+            theme: 'bootstrap-5',
+            placeholder: '-- ค้นหา/เลือกสินค้า --',
+            allowClear: true
         });
 
-        // Initialize Donation Modal
-        const btnDonation = document.getElementById('btnDonation');
-        if(btnDonation) {
-            btnDonation.addEventListener('click', function() {
-                var myModal = new bootstrap.Modal(document.getElementById('donationModal'));
-                myModal.show();
-            });
-        }
-        
-        // Dynamic Unit & Max Limit Logic
-        const distInvSelect = document.getElementById('dist_inv_id');
-        const qtyInput = document.getElementById('qty');
-        const hint = document.getElementById('max_qty_hint');
-        const unitLabel = document.getElementById('qty_unit_label');
-        
-        if(distInvSelect) {
-            distInvSelect.addEventListener('change', function() {
-                const selected = this.options[this.selectedIndex];
-                const max = selected.getAttribute('data-max');
-                const unit = selected.getAttribute('data-unit');
-                
-                // Update Unit Label
-                if(unit) unitLabel.textContent = unit;
-                else unitLabel.textContent = 'หน่วย';
+        // Stock Update Logic
+        $('#inventory_select').on('change', function() {
+            var selected = $(this).find(':selected');
+            var qty = selected.data('qty');
+            var unit = selected.data('unit');
+            
+            if (qty !== undefined) {
+                $('#current_stock').text(new Intl.NumberFormat().format(qty) + ' ' + unit);
+                $('#unit_label').text(unit);
+                $('#dist_qty').attr('max', qty);
+                $('#dist_qty').prop('disabled', false);
+            } else {
+                $('#current_stock').text('-');
+                $('#unit_label').text('หน่วย');
+                $('#dist_qty').prop('disabled', true);
+            }
+        });
 
-                // Update Max Limit
-                if(max) {
-                    qtyInput.setAttribute('max', max);
-                    hint.textContent = 'เบิกได้สูงสุด ' + max + ' ' + (unit || 'หน่วย');
-                    hint.classList.remove('d-none');
-                } else {
-                    qtyInput.removeAttribute('max');
-                    hint.classList.add('d-none');
-                }
-            });
-        }
+        // Quantity Validation
+        $('#dist_qty').on('input', function() {
+            var max = parseInt($(this).attr('max')) || 0;
+            var val = parseInt($(this).val()) || 0;
+            
+            if(val > max) {
+                $(this).addClass('is-invalid');
+                // Optional: Auto cap or just warn
+                // $(this).val(max); 
+            } else {
+                $(this).removeClass('is-invalid');
+            }
+        });
+
+        // Init Select2 for Evacuee Search (AJAX)
+        $('.select2-ajax').select2({
+            theme: 'bootstrap-5',
+            ajax: {
+                url: 'search_evacuee.php', // ต้องมีไฟล์นี้สำหรับค้นหา JSON
+                dataType: 'json',
+                delay: 250,
+                data: function (params) {
+                    return { q: params.term };
+                },
+                processResults: function (data) {
+                    return {
+                        results: $.map(data, function(item) {
+                            return {
+                                id: item.id,
+                                text: item.full_name + ' (ID: ' + item.id_card.substr(-4) + ')'
+                            }
+                        })
+                    };
+                },
+                cache: true
+            },
+            placeholder: 'พิมพ์ชื่อเพื่อค้นหา...',
+            minimumInputLength: 2,
+            language: {
+                inputTooShort: function() { return "โปรดพิมพ์อย่างน้อย 2 ตัวอักษร"; },
+                noResults: function() { return "ไม่พบข้อมูล"; },
+                searching: function() { return "กำลังค้นหา..."; }
+            }
+        });
+
+        // Initialize Recipient Toggle
+        toggleRecipient('evacuee');
     });
 
-    function stepUp(id) {
-        var el = document.getElementById(id);
-        if(el) el.stepUp();
-    }
-    function stepDown(id) {
-        var el = document.getElementById(id);
-        if(el) el.stepDown();
+    function toggleRecipient(type) {
+        const evacueeSelect = $('#evacuee_id_select');
+        const generalInput = $('#recipient_group_input');
+
+        if(type === 'evacuee') {
+            $('#evacuee_section').removeClass('d-none');
+            $('#general_section').addClass('d-none');
+            
+            // Set Required
+            evacueeSelect.prop('required', true);
+            generalInput.prop('required', false);
+        } else {
+            $('#evacuee_section').addClass('d-none');
+            $('#general_section').removeClass('d-none');
+
+            // Set Required
+            evacueeSelect.prop('required', false);
+            generalInput.prop('required', true);
+        }
     }
 </script>
+
+<?php include 'includes/footer.php'; ?>
 </body>
 </html>
