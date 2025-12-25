@@ -1,249 +1,383 @@
 <?php
 // system_log_list.php
+// หน้าแสดงประวัติการใช้งานและกิจกรรมในระบบ (Activity Logs) - ปรับปรุงสี Badge ให้ชัดเจน
 require_once 'config/db.php';
-require_once 'includes/functions.php'; // renderPagination
-if (session_status() == PHP_SESSION_NONE) { session_start(); }
+require_once 'includes/functions.php';
 
-// 1. Security Check: เฉพาะ Admin เท่านั้น
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
-    header("Location: index.php");
-    exit();
+if (session_status() == PHP_SESSION_NONE) { session_start(); }
+if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit(); }
+
+// อนุญาตเฉพาะ Admin หรือผู้ที่มีสิทธิ์ดู Log
+if ($_SESSION['role'] !== 'admin') {
+    die("Access Denied: คุณไม่มีสิทธิ์เข้าถึงหน้านี้");
 }
 
-// 2. Filter Logic
-$user_search = isset($_GET['user']) ? trim($_GET['user']) : '';
-$action_search = isset($_GET['action']) ? trim($_GET['action']) : '';
-$date_start = isset($_GET['date_start']) ? $_GET['date_start'] : '';
-$date_end = isset($_GET['date_end']) ? $_GET['date_end'] : '';
+// --- 1. Filter Setup ---
+$shelter_id = $_GET['shelter_id'] ?? '';
+$search     = isset($_GET['search']) ? trim($_GET['search']) : '';
+$start_date = $_GET['start_date'] ?? date('Y-m-d', strtotime('-7 days'));
+$end_date   = $_GET['end_date'] ?? date('Y-m-d');
+$action_type = $_GET['action_type'] ?? '';
 
-// 3. Pagination Setup
+// --- 2. Pagination Setup ---
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-$limit = 10; // แสดง 10 รายการต่อหน้า
+if ($page < 1) $page = 1;
+$limit = 50; 
 $offset = ($page - 1) * $limit;
 
-// 4. Query Construction
-// Base Condition
-$where_sql = " WHERE 1=1 ";
+// --- 3. Build Query ---
 $params = [];
+$where = " WHERE 1=1 ";
 
-if ($user_search) {
-    $where_sql .= " AND (u.username LIKE ? OR u.full_name LIKE ?) ";
-    $params[] = "%$user_search%";
-    $params[] = "%$user_search%";
+// Filter Date
+if ($start_date && $end_date) {
+    $where .= " AND l.created_at BETWEEN ? AND ? ";
+    $params[] = $start_date . " 00:00:00";
+    $params[] = $end_date . " 23:59:59";
 }
 
-if ($action_search) {
-    $where_sql .= " AND l.action LIKE ? ";
-    $params[] = "%$action_search%";
+// Filter Shelter
+if ($shelter_id) {
+    $where .= " AND u.shelter_id = ? ";
+    $params[] = $shelter_id;
 }
 
-if ($date_start) {
-    $where_sql .= " AND DATE(l.created_at) >= ? ";
-    $params[] = $date_start;
+// Filter Search
+if ($search) {
+    $where .= " AND (u.username LIKE ? OR l.action LIKE ? OR l.details LIKE ? OR l.ip_address LIKE ?) ";
+    $term = "%$search%";
+    $params[] = $term; $params[] = $term; $params[] = $term; $params[] = $term;
 }
 
-if ($date_end) {
-    $where_sql .= " AND DATE(l.created_at) <= ? ";
-    $params[] = $date_end;
+// Filter Action Type
+if ($action_type) {
+    if ($action_type == 'login') {
+        $where .= " AND (l.action LIKE '%login%' OR l.action LIKE '%logout%') ";
+    } elseif ($action_type == 'add') {
+        $where .= " AND (l.action LIKE '%add%' OR l.action LIKE '%insert%' OR l.action LIKE '%create%' OR l.action LIKE '%register%') ";
+    } elseif ($action_type == 'edit') {
+        $where .= " AND (l.action LIKE '%edit%' OR l.action LIKE '%update%') ";
+    } elseif ($action_type == 'delete') {
+        $where .= " AND (l.action LIKE '%delete%' OR l.action LIKE '%remove%') ";
+    } elseif ($action_type == 'inventory') {
+        $where .= " AND (l.action LIKE '%stock%' OR l.action LIKE '%inventory%' OR l.action LIKE '%distribute%') ";
+    }
 }
 
-// 4.1 Count Total
-$sql_count = "SELECT COUNT(*) FROM system_logs l LEFT JOIN users u ON l.user_id = u.id " . $where_sql;
-$stmt_count = $pdo->prepare($sql_count);
+// Count Total
+$count_sql = "SELECT COUNT(*) 
+              FROM system_logs l
+              LEFT JOIN users u ON l.user_id = u.id 
+              $where";
+$stmt_count = $pdo->prepare($count_sql);
 $stmt_count->execute($params);
 $total_records = $stmt_count->fetchColumn();
 $total_pages = ceil($total_records / $limit);
 
-// 4.2 Fetch Data with Limit
-$sql = "SELECT l.*, u.username, u.full_name 
-        FROM system_logs l 
-        LEFT JOIN users u ON l.user_id = u.id 
-        $where_sql
-        ORDER BY l.created_at DESC LIMIT $limit OFFSET $offset";
+// Main Query
+$sql = "SELECT l.*, u.username, u.role, s.name as shelter_name
+        FROM system_logs l
+        LEFT JOIN users u ON l.user_id = u.id
+        LEFT JOIN shelters s ON u.shelter_id = s.id
+        $where
+        ORDER BY l.created_at DESC
+        LIMIT $limit OFFSET $offset";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $logs = $stmt->fetchAll();
+
+// Fetch Shelters
+$shelters = $pdo->query("SELECT id, name FROM shelters WHERE status != 'closed'")->fetchAll();
+
+// Helper for Pagination Link
+function getQueryString($page) {
+    $query = $_GET;
+    $query['page'] = $page;
+    return http_build_query($query);
+}
 ?>
 
 <!DOCTYPE html>
 <html lang="th">
 <head>
+    <title>ประวัติกิจกรรมและความเคลื่อนไหว</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        .filter-card {
-            background-color: #fff;
-            border-bottom: 3px solid #1e293b;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        }
+        .bg-gradient-header { background: linear-gradient(135deg, #2c3e50 0%, #4ca1af 100%); color: white; }
+        .table-logs th { background-color: #f1f5f9; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; color: #475569; }
+        .table-logs td { font-size: 0.9rem; vertical-align: middle; border-bottom: 1px solid #f1f5f9; }
+        .table-logs tr:hover td { background-color: #f8fafc; }
         
-        .log-icon {
-            width: 35px;
-            height: 35px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.9rem;
-        }
-        
+        /* --- Customized Action Badges (สีชัดเจนขึ้น) --- */
         .badge-action {
             font-size: 0.75rem;
             font-weight: 600;
-            padding: 4px 8px;
-            border-radius: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 110px;
+        }
+
+        /* Login: Blue/Indigo - Security */
+        .badge-login { 
+            background-color: #e0e7ff; 
+            color: #3730a3; 
+            border: 1px solid #c7d2fe; 
         }
         
-        /* Action Types Colors */
-        .bg-login { background-color: #dbeafe; color: #1e40af; } /* Blue */
-        .bg-add { background-color: #dcfce7; color: #166534; }   /* Green */
-        .bg-edit { background-color: #fef9c3; color: #854d0e; }  /* Yellow */
-        .bg-delete { background-color: #fee2e2; color: #991b1b; } /* Red */
-        .bg-other { background-color: #f3f4f6; color: #374151; }  /* Gray */
+        /* Add: Emerald Green - Positive Action */
+        .badge-add { 
+            background-color: #d1fae5; 
+            color: #065f46; 
+            border: 1px solid #a7f3d0; 
+        }
+        
+        /* Edit: Amber/Orange - Modification */
+        .badge-edit { 
+            background-color: #fef3c7; 
+            color: #92400e; 
+            border: 1px solid #fde68a; 
+        }
+        
+        /* Delete: Rose/Red - Critical */
+        .badge-delete { 
+            background-color: #ffe4e6; 
+            color: #9f1239; 
+            border: 1px solid #fecdd3; 
+        }
+        
+        /* Inventory: Cyan/Teal - Logistics */
+        .badge-inv { 
+            background-color: #ccfbf1; 
+            color: #115e59; 
+            border: 1px solid #99f6e4; 
+        }
+
+        /* Other: Slate - Neutral */
+        .badge-other { 
+            background-color: #f1f5f9; 
+            color: #475569; 
+            border: 1px solid #e2e8f0; 
+        }
+
+        .user-role-badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 12px; opacity: 0.9; }
     </style>
 </head>
 <body class="bg-light">
 
 <?php include 'includes/header.php'; ?>
 
-<div class="container-fluid">
-    
-    <div class="d-flex justify-content-between align-items-center mb-4 pt-2">
+<div class="container-fluid px-4 mt-4">
+
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
         <div>
-            <h4 class="fw-bold text-dark mb-1">
-                <i class="fas fa-history text-secondary me-2"></i>ประวัติการใช้งานระบบ
-            </h4>
-            <span class="text-muted small">System Audit Logs</span>
+            <h3 class="fw-bold text-dark"><i class="fas fa-history text-primary me-2"></i>ประวัติกิจกรรมในระบบ (System Logs)</h3>
+            <p class="text-muted small mb-0">ตรวจสอบความเคลื่อนไหว กิจกรรม และการใช้งานของผู้เจ้าหน้าที่ทุกระดับ</p>
         </div>
         <div>
-            <span class="badge bg-white text-dark border shadow-sm">
-                <i class="fas fa-list me-1"></i> รายการทั้งหมด <?php echo number_format($total_records); ?>
+            <span class="badge bg-white text-dark border shadow-sm fs-6 px-3 py-2">
+                <i class="fas fa-database text-secondary me-2"></i> รายการทั้งหมด: <strong><?php echo number_format($total_records); ?></strong>
             </span>
         </div>
     </div>
 
-    <!-- Filter Section -->
-    <div class="card filter-card border-0 mb-4 rounded-3">
-        <div class="card-body p-3">
+    <!-- Filter Card -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-white py-3">
+            <h6 class="m-0 fw-bold text-secondary"><i class="fas fa-filter me-2"></i>กรองข้อมูล (Filters)</h6>
+        </div>
+        <div class="card-body bg-white rounded-bottom">
             <form action="" method="GET" class="row g-3 align-items-end">
+                
                 <div class="col-md-3">
-                    <label class="form-label small fw-bold text-muted">ผู้ใช้งาน (User)</label>
-                    <input type="text" name="user" class="form-control form-control-sm" placeholder="ชื่อ หรือ Username" value="<?php echo htmlspecialchars($user_search); ?>">
+                    <label class="form-label small fw-bold text-muted">ศูนย์พักพิง</label>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-light border-end-0"><i class="fas fa-home text-muted"></i></span>
+                        <select name="shelter_id" class="form-select border-start-0 ps-0">
+                            <option value="">-- แสดงทุกศูนย์ --</option>
+                            <?php foreach($shelters as $s): ?>
+                                <option value="<?php echo $s['id']; ?>" <?php echo $shelter_id == $s['id'] ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($s['name']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                 </div>
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold text-muted">การกระทำ (Action)</label>
-                    <select name="action" class="form-select form-select-sm">
-                        <option value="">ทั้งหมด</option>
-                        <option value="Login" <?php echo $action_search=='Login'?'selected':''; ?>>เข้าสู่ระบบ (Login)</option>
-                        <option value="Add" <?php echo strpos($action_search,'Add')!==false?'selected':''; ?>>เพิ่มข้อมูล (Add)</option>
-                        <option value="Edit" <?php echo strpos($action_search,'Edit')!==false?'selected':''; ?>>แก้ไขข้อมูล (Edit)</option>
-                        <option value="Delete" <?php echo strpos($action_search,'Delete')!==false?'selected':''; ?>>ลบข้อมูล (Delete)</option>
-                    </select>
-                </div>
+
                 <div class="col-md-4">
                     <label class="form-label small fw-bold text-muted">ช่วงเวลา</label>
                     <div class="input-group input-group-sm">
-                        <input type="date" name="date_start" class="form-control" value="<?php echo $date_start; ?>">
-                        <span class="input-group-text">ถึง</span>
-                        <input type="date" name="date_end" class="form-control" value="<?php echo $date_end; ?>">
+                        <input type="date" name="start_date" class="form-control" value="<?php echo $start_date; ?>">
+                        <span class="input-group-text bg-light border-start-0 border-end-0 text-muted">ถึง</span>
+                        <input type="date" name="end_date" class="form-control" value="<?php echo $end_date; ?>">
                     </div>
                 </div>
-                <div class="col-md-3 text-md-end">
-                    <button type="submit" class="btn btn-primary btn-sm px-3 shadow-sm"><i class="fas fa-search me-1"></i> ค้นหา</button>
-                    <a href="system_log_list.php" class="btn btn-light btn-sm border px-3">ล้างค่า</a>
+
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold text-muted">ประเภทกิจกรรม</label>
+                    <select name="action_type" class="form-select form-select-sm">
+                        <option value="">-- ทั้งหมด --</option>
+                        <option value="login" <?php echo $action_type == 'login' ? 'selected' : ''; ?>>เข้า/ออกระบบ (Login)</option>
+                        <option value="add" <?php echo $action_type == 'add' ? 'selected' : ''; ?>>เพิ่มข้อมูล (Create)</option>
+                        <option value="edit" <?php echo $action_type == 'edit' ? 'selected' : ''; ?>>แก้ไขข้อมูล (Update)</option>
+                        <option value="delete" <?php echo $action_type == 'delete' ? 'selected' : ''; ?>>ลบข้อมูล (Delete)</option>
+                        <option value="inventory" <?php echo $action_type == 'inventory' ? 'selected' : ''; ?>>คลังสินค้า (Stock)</option>
+                    </select>
                 </div>
+
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold text-muted">ค้นหา</label>
+                    <div class="input-group input-group-sm">
+                        <input type="text" name="search" class="form-control" placeholder="ค้นหา Keyword..." value="<?php echo htmlspecialchars($search); ?>">
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i></button>
+                        <?php if($shelter_id || $search || $action_type): ?>
+                            <a href="system_log_list.php" class="btn btn-light border" title="ล้างค่า"><i class="fas fa-times"></i></a>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
             </form>
         </div>
     </div>
 
-    <!-- Logs Table -->
-    <div class="card border-0 shadow-sm rounded-3 overflow-hidden">
+    <!-- Data Table -->
+    <div class="card shadow-sm border-0 mb-5">
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0 table-official">
-                    <thead>
+                <table class="table table-logs mb-0">
+                    <thead class="table-light">
                         <tr>
-                            <th class="ps-4">วัน-เวลา</th>
-                            <th>ผู้ทำรายการ</th>
-                            <th>ประเภท (Action)</th>
-                            <th>รายละเอียด</th>
-                            <th class="text-end pe-4">IP Address</th>
+                            <th class="ps-4" style="width: 15%;">วัน-เวลา</th>
+                            <th style="width: 15%;">ศูนย์พักพิง</th>
+                            <th style="width: 18%;">ผู้ใช้งาน</th>
+                            <th style="width: 15%;">ประเภทกิจกรรม</th>
+                            <th style="width: 27%;">รายละเอียด</th>
+                            <th style="width: 10%;">IP</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if(count($logs) > 0): ?>
-                            <?php foreach ($logs as $row): ?>
-                                <?php
-                                    // กำหนดสีตามประเภท Action
-                                    $act = strtolower($row['action']);
-                                    $bg_class = 'bg-other';
-                                    $icon = 'fa-info';
-                                    
-                                    if(strpos($act, 'login') !== false) { $bg_class = 'bg-login'; $icon = 'fa-sign-in-alt'; }
-                                    elseif(strpos($act, 'add') !== false) { $bg_class = 'bg-add'; $icon = 'fa-plus'; }
-                                    elseif(strpos($act, 'edit') !== false) { $bg_class = 'bg-edit'; $icon = 'fa-pen'; }
-                                    elseif(strpos($act, 'delete') !== false) { $bg_class = 'bg-delete'; $icon = 'fa-trash'; }
-                                ?>
-                                <tr>
-                                    <td class="ps-4 text-nowrap">
-                                        <div class="fw-bold text-dark"><?php echo thaiDate(date('Y-m-d', strtotime($row['created_at']))); ?></div>
-                                        <div class="small text-muted"><?php echo date('H:i:s', strtotime($row['created_at'])); ?> น.</div>
-                                    </td>
-                                    <td>
-                                        <?php if($row['username']): ?>
-                                            <div class="d-flex align-items-center">
-                                                <div class="log-icon bg-light text-secondary me-2">
-                                                    <i class="fas fa-user"></i>
-                                                </div>
-                                                <div>
-                                                    <div class="fw-bold text-dark"><?php echo htmlspecialchars($row['username']); ?></div>
-                                                    <div class="small text-muted"><?php echo htmlspecialchars($row['full_name']); ?></div>
-                                                </div>
-                                            </div>
-                                        <?php else: ?>
-                                            <span class="text-muted fst-italic">Unknown User (ID: <?php echo $row['user_id']; ?>)</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <span class="badge-action <?php echo $bg_class; ?>">
-                                            <i class="fas <?php echo $icon; ?> me-1"></i> <?php echo htmlspecialchars($row['action']); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="text-dark"><?php echo htmlspecialchars($row['description']); ?></span>
-                                    </td>
-                                    <td class="text-end pe-4 text-muted font-monospace small">
-                                        <?php echo htmlspecialchars($row['ip_address']); ?>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
+                        <?php if (empty($logs)): ?>
+                            <tr><td colspan="6" class="text-center py-5 text-muted">
+                                <i class="fas fa-search fa-3x mb-3 text-secondary opacity-25"></i><br>
+                                ไม่พบข้อมูลตามเงื่อนไขที่ค้นหา
+                            </td></tr>
                         <?php else: ?>
+                            <?php foreach ($logs as $row): 
+                                // Determine Badge Style & Icon
+                                $act = strtolower($row['action']);
+                                $badgeClass = 'badge-other';
+                                $icon = 'fa-circle';
+                                
+                                if (strpos($act, 'login') !== false || strpos($act, 'logout') !== false) {
+                                    $badgeClass = 'badge-login'; $icon = 'fa-key';
+                                } elseif (strpos($act, 'add') !== false || strpos($act, 'insert') !== false || strpos($act, 'create') !== false || strpos($act, 'register') !== false) {
+                                    $badgeClass = 'badge-add'; $icon = 'fa-plus-circle';
+                                } elseif (strpos($act, 'edit') !== false || strpos($act, 'update') !== false) {
+                                    $badgeClass = 'badge-edit'; $icon = 'fa-pen';
+                                } elseif (strpos($act, 'delete') !== false || strpos($act, 'remove') !== false) {
+                                    $badgeClass = 'badge-delete'; $icon = 'fa-trash-alt';
+                                } elseif (strpos($act, 'stock') !== false || strpos($act, 'distribute') !== false || strpos($act, 'inventory') !== false) {
+                                    $badgeClass = 'badge-inv'; $icon = 'fa-box-open';
+                                }
+
+                                // Role Display
+                                $roleBadge = 'bg-secondary';
+                                if ($row['role'] == 'admin') $roleBadge = 'bg-danger';
+                                elseif ($row['role'] == 'staff') $roleBadge = 'bg-primary';
+                                elseif ($row['role'] == 'donation_officer') $roleBadge = 'bg-success';
+                                
+                                // Shelter Display
+                                $shelterDisplay = $row['shelter_name'] ? 
+                                    '<div class="text-dark small"><i class="fas fa-map-marker-alt text-danger me-1"></i>'.htmlspecialchars($row['shelter_name']).'</div>' : 
+                                    '<span class="text-muted small"><em>(ส่วนกลาง)</em></span>';
+                            ?>
                             <tr>
-                                <td colspan="5" class="text-center py-5 text-muted">ไม่พบข้อมูลประวัติการใช้งาน</td>
+                                <td class="ps-4 text-nowrap">
+                                    <div class="fw-bold text-dark"><?php echo date('d/m/Y', strtotime($row['created_at'])); ?></div>
+                                    <div class="small text-muted font-monospace"><?php echo date('H:i:s', strtotime($row['created_at'])); ?></div>
+                                </td>
+                                <td>
+                                    <?php echo $shelterDisplay; ?>
+                                </td>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <div class="fw-bold text-dark me-2"><?php echo htmlspecialchars($row['username'] ?? 'Unknown'); ?></div>
+                                    </div>
+                                    <span class="badge user-role-badge <?php echo $roleBadge; ?>">
+                                        <?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $row['role'] ?? 'unknown'))); ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge-action <?php echo $badgeClass; ?>">
+                                        <i class="fas <?php echo $icon; ?>"></i> <?php echo htmlspecialchars($row['action']); ?>
+                                    </span>
+                                </td>
+                                <td class="text-secondary">
+                                    <div class="text-break small" style="max-width: 350px; line-height: 1.5;">
+                                        <?php 
+                                            echo htmlspecialchars($row['details'] ?? ($row['description'] ?? '-')); 
+                                        ?>
+                                    </div>
+                                </td>
+                                <td class="small text-muted font-monospace">
+                                    <?php echo htmlspecialchars($row['ip_address'] ?? '-'); ?>
+                                </td>
                             </tr>
+                            <?php endforeach; ?>
                         <?php endif; ?>
                     </tbody>
                 </table>
             </div>
 
             <!-- Pagination -->
-            <div class="p-3 bg-light border-top">
-                <?php 
-                    echo renderPagination($page, $total_pages, [
-                        'user' => $user_search,
-                        'action' => $action_search,
-                        'date_start' => $date_start,
-                        'date_end' => $date_end
-                    ]); 
-                ?>
-                <div class="text-center text-muted small mt-2">
-                    แสดง <?php echo count($logs); ?> จากทั้งหมด <?php echo number_format($total_records); ?> รายการ
+            <?php if ($total_pages > 1): ?>
+            <div class="d-flex justify-content-between align-items-center p-3 border-top bg-white">
+                <div class="small text-muted">
+                    หน้า <strong><?php echo $page; ?></strong> จาก <?php echo $total_pages; ?>
                 </div>
+                <nav>
+                    <ul class="pagination pagination-sm mb-0">
+                        <li class="page-item <?php echo $page <= 1 ? 'disabled' : ''; ?>">
+                            <a class="page-link" href="?<?php echo getQueryString(1); ?>">&laquo; แรกสุด</a>
+                        </li>
+                        <li class="page-item <?php echo $page <= 1 ? 'disabled' : ''; ?>">
+                            <a class="page-link" href="?<?php echo getQueryString($page - 1); ?>">ก่อนหน้า</a>
+                        </li>
+                        
+                        <?php
+                        $start_p = max(1, $page - 2);
+                        $end_p = min($total_pages, $page + 2);
+                        
+                        if($start_p > 1) echo '<li class="page-item disabled"><span class="page-link">...</span></li>';
+
+                        for ($i = $start_p; $i <= $end_p; $i++):
+                        ?>
+                            <li class="page-item <?php echo $page == $i ? 'active' : ''; ?>">
+                                <a class="page-link" href="?<?php echo getQueryString($i); ?>"><?php echo $i; ?></a>
+                            </li>
+                        <?php endfor; ?>
+
+                        <?php if($end_p < $total_pages) echo '<li class="page-item disabled"><span class="page-link">...</span></li>'; ?>
+
+                        <li class="page-item <?php echo $page >= $total_pages ? 'disabled' : ''; ?>">
+                            <a class="page-link" href="?<?php echo getQueryString($page + 1); ?>">ถัดไป</a>
+                        </li>
+                        <li class="page-item <?php echo $page >= $total_pages ? 'disabled' : ''; ?>">
+                            <a class="page-link" href="?<?php echo getQueryString($total_pages); ?>">ท้ายสุด &raquo;</a>
+                        </li>
+                    </ul>
+                </nav>
             </div>
+            <?php endif; ?>
 
         </div>
     </div>
+
 </div>
 
 <?php include 'includes/footer.php'; ?>
