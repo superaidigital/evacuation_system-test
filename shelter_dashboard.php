@@ -1,278 +1,334 @@
 <?php
 // shelter_dashboard.php
-// หน้า Dashboard สรุปข้อมูลเฉพาะศูนย์พักพิง (Population, Demographics, Inventory)
+// แสดงภาพรวมข้อมูลเฉพาะของศูนย์พักพิงที่เลือก (Real-time Dashboard)
+
 require_once 'config/db.php';
 require_once 'includes/functions.php';
 
+// ตรวจสอบ Session
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
-if (!isset($_SESSION['user_id'])) { header("Location: login.php"); exit(); }
 
-$role = $_SESSION['role'];
-$my_shelter_id = $_SESSION['shelter_id'] ?? 0;
-
-// กำหนด Shelter ID ที่จะดู
-// Admin เลือกได้ผ่าน URL, Staff บังคับดูศูนย์ตัวเอง
-if ($role === 'admin' && isset($_GET['shelter_id'])) {
-    $shelter_id = (int)$_GET['shelter_id'];
-} else {
-    $shelter_id = $my_shelter_id;
+// ตรวจสอบสิทธิ์
+if (!isset($_SESSION['user_id']) && !isset($_SESSION['username'])) { 
+    header("Location: login.php"); 
+    exit(); 
 }
 
-// ถ้าไม่มี Shelter ID (เช่น Admin เข้ามาแต่ยังไม่เลือก)
-if (!$shelter_id && $role === 'admin') {
-    // Redirect ไปหน้า List หรือเลือกศูนย์ก่อน (ในที่นี้ให้แสดง Dropdown เลือก)
-    $show_selector = true;
-} else {
-    $show_selector = false;
+// 1. รับค่า Shelter ID
+$shelter_id = isset($_GET['shelter_id']) ? intval($_GET['shelter_id']) : 0;
+
+if ($shelter_id <= 0) {
+    $_SESSION['error'] = "ไม่พบรหัสศูนย์พักพิง";
+    header("Location: shelter_list.php");
+    exit();
 }
 
-// --- 1. Fetch Shelter Info ---
-$shelter_info = [];
-if ($shelter_id) {
-    $stmt = $pdo->prepare("SELECT * FROM shelters WHERE id = ?");
-    $stmt->execute([$shelter_id]);
-    $shelter_info = $stmt->fetch();
+// 2. ดึงข้อมูลศูนย์พักพิง (Shelter Info)
+$sql_shelter = "SELECT * FROM shelters WHERE id = ?";
+$stmt = $conn->prepare($sql_shelter);
+$stmt->bind_param("i", $shelter_id);
+$stmt->execute();
+$res_shelter = $stmt->get_result();
+$shelter = $res_shelter->fetch_assoc();
+
+if (!$shelter) {
+    $_SESSION['error'] = "ไม่พบข้อมูลศูนย์พักพิง";
+    header("Location: shelter_list.php");
+    exit();
 }
 
-// --- 2. Fetch Statistics (ถ้ามี Shelter ID) ---
-$stats = [
-    'total' => 0, 'male' => 0, 'female' => 0, 
-    'child' => 0, 'adult' => 0, 'elderly' => 0,
-    'vulnerable' => 0
-];
-$inventory_alert = [];
+// 3. คำนวณสถิติ (Statistics)
+// 3.1 จำนวนผู้อพยพทั้งหมด
+$sql_total = "SELECT COUNT(*) as total FROM evacuees WHERE shelter_id = ?";
+$stmt = $conn->prepare($sql_total);
+$stmt->bind_param("i", $shelter_id);
+$stmt->execute();
+$total_evacuees = $stmt->get_result()->fetch_assoc()['total'];
 
-if ($shelter_id) {
-    // 2.1 Demographics
-    $sql_demo = "SELECT 
-                    COUNT(*) as total,
-                    SUM(CASE WHEN gender = 'male' THEN 1 ELSE 0 END) as male,
-                    SUM(CASE WHEN gender = 'female' THEN 1 ELSE 0 END) as female,
-                    SUM(CASE WHEN age < 15 THEN 1 ELSE 0 END) as child,
-                    SUM(CASE WHEN age BETWEEN 15 AND 59 THEN 1 ELSE 0 END) as adult,
-                    SUM(CASE WHEN age >= 60 THEN 1 ELSE 0 END) as elderly
-                 FROM evacuees WHERE shelter_id = ?";
-    $stmt_demo = $pdo->prepare($sql_demo);
-    $stmt_demo->execute([$shelter_id]);
-    $res_demo = $stmt_demo->fetch(PDO::FETCH_ASSOC);
-    if ($res_demo) $stats = array_merge($stats, $res_demo);
-
-    // 2.2 Vulnerable Count (นับจาก Table needs หรือ flag ใน evacuees แล้วแต่โครงสร้าง)
-    // สมมติโครงสร้าง: ตาราง evacuees มี column 'category' หรือนับจาก evacuee_needs
-    // เพื่อความง่าย ลองนับจาก Keywords ใน evacuee_needs ถ้ามี หรือนับ Elderly เป็นกลุ่มเปราะบางพื้นฐาน
-    $stats['vulnerable'] = $stats['elderly']; // เบื้องต้นนับผู้สูงอายุ
-
-    // 2.3 Inventory Low Stock
-    $sql_inv = "SELECT item_name, quantity, unit FROM inventory WHERE shelter_id = ? AND quantity < 20 ORDER BY quantity ASC LIMIT 5";
-    $stmt_inv = $pdo->prepare($sql_inv);
-    $stmt_inv->execute([$shelter_id]);
-    $inventory_alert = $stmt_inv->fetchAll();
+// 3.2 แยกตามเพศ (Gender)
+$sql_gender = "SELECT gender, COUNT(*) as count FROM evacuees WHERE shelter_id = ? GROUP BY gender";
+$stmt = $conn->prepare($sql_gender);
+$stmt->bind_param("i", $shelter_id);
+$stmt->execute();
+$res_gender = $stmt->get_result();
+$gender_data = ['Male' => 0, 'Female' => 0, 'Other' => 0];
+while($row = $res_gender->fetch_assoc()) {
+    $g = ucfirst(strtolower($row['gender'])); // ปรับให้เป็นตัวพิมพ์ใหญ่ตัวแรก
+    if (isset($gender_data[$g])) {
+        $gender_data[$g] = $row['count'];
+    } else {
+        $gender_data['Other'] += $row['count'];
+    }
 }
 
-// Fetch All Shelters for Admin Selector
-$all_shelters = [];
-if ($role === 'admin') {
-    $all_shelters = $pdo->query("SELECT id, name FROM shelters WHERE status != 'closed'")->fetchAll();
-}
+// 3.3 กลุ่มเปราะบาง (Vulnerable Groups) - คำนวณจากอายุและสุขภาพ
+// เด็ก (<12), ผู้สูงอายุ (>60), ผู้ป่วย (health_status != 'Normal'/'Healthy')
+$sql_vul = "SELECT 
+    SUM(CASE WHEN age < 12 THEN 1 ELSE 0 END) as kids,
+    SUM(CASE WHEN age >= 60 THEN 1 ELSE 0 END) as elderly,
+    SUM(CASE WHEN health_status NOT IN ('Normal', 'Healthy', 'แข็งแรง', 'ปกติ') AND health_status IS NOT NULL AND health_status != '' THEN 1 ELSE 0 END) as sick
+    FROM evacuees WHERE shelter_id = ?";
+$stmt = $conn->prepare($sql_vul);
+$stmt->bind_param("i", $shelter_id);
+$stmt->execute();
+$vul_stats = $stmt->get_result()->fetch_assoc();
+
+// คำนวณเปอร์เซ็นต์ความจุ
+$capacity = $shelter['capacity'] > 0 ? $shelter['capacity'] : 1;
+$percent_full = ($total_evacuees / $capacity) * 100;
+
+// กำหนดสีสถานะ
+$status_color = 'success';
+if ($shelter['status'] == 'Full') $status_color = 'warning';
+if ($shelter['status'] == 'Closed') $status_color = 'danger';
+
 ?>
 
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <title>Dashboard ข้อมูลศูนย์พักพิง</title>
+    <meta charset="UTF-8">
+    <title>Dashboard: <?php echo htmlspecialchars($shelter['name']); ?></title>
+    <!-- Bootstrap 5 CDN -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;700&display=swap" rel="stylesheet">
+
     <style>
-        .card-stat { transition: transform 0.2s; border: none; border-radius: 10px; color: white; }
-        .card-stat:hover { transform: translateY(-5px); }
-        .bg-gradient-blue { background: linear-gradient(45deg, #4099ff, #73b4ff); }
-        .bg-gradient-green { background: linear-gradient(45deg, #2ed8b6, #59e0c5); }
-        .bg-gradient-pink { background: linear-gradient(45deg, #FF5370, #ff869a); }
-        .bg-gradient-amber { background: linear-gradient(45deg, #FFB64D, #ffcb80); }
-        
-        .stat-icon { font-size: 2.5rem; opacity: 0.5; position: absolute; right: 20px; top: 20px; }
-        .stat-value { font-size: 2rem; font-weight: bold; }
-        .stat-label { font-size: 0.9rem; opacity: 0.9; }
+        body { font-family: 'Noto Sans Thai', sans-serif; background-color: #f4f6f9; }
+        .card-dashboard { border: none; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); height: 100%; }
+        .icon-box { width: 50px; height: 50px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
+        .bg-gradient-primary { background: linear-gradient(45deg, #0d6efd, #0a58ca); }
+        .bg-gradient-success { background: linear-gradient(45deg, #198754, #157347); }
+        .bg-gradient-warning { background: linear-gradient(45deg, #ffc107, #ffca2c); color: #000; }
+        .bg-gradient-info { background: linear-gradient(45deg, #0dcaf0, #3dd5f3); color: #000; }
     </style>
 </head>
-<body class="bg-light">
+<body>
 
-<?php include 'includes/header.php'; ?>
+<?php include('includes/header.php'); ?>
 
 <div class="container mt-4 mb-5">
-
-    <!-- Header Section -->
+    
+    <!-- Header -->
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h3 class="fw-bold text-dark"><i class="fas fa-chart-pie me-2 text-primary"></i>สรุปข้อมูลศูนย์พักพิง</h3>
-            <?php if($shelter_id && $shelter_info): ?>
-                <span class="badge bg-primary fs-6"><?php echo htmlspecialchars($shelter_info['name']); ?></span>
-                <span class="text-muted small ms-2"><i class="fas fa-map-marker-alt"></i> <?php echo htmlspecialchars($shelter_info['location'] ?? '-'); ?></span>
-            <?php endif; ?>
+            <h5 class="text-muted mb-0">Dashboard ภาพรวม</h5>
+            <h2 class="fw-bold text-primary mb-0">
+                <i class="fas fa-campground me-2"></i> <?php echo htmlspecialchars($shelter['name']); ?>
+            </h2>
+            <small class="text-muted"><i class="fas fa-map-marker-alt me-1"></i> <?php echo htmlspecialchars($shelter['location']); ?></small>
+        </div>
+        <div>
+            <a href="shelter_form.php?edit=<?php echo $shelter['id']; ?>" class="btn btn-outline-warning me-2">
+                <i class="fas fa-edit me-1"></i> แก้ไขข้อมูล
+            </a>
+            <a href="shelter_list.php" class="btn btn-secondary">
+                <i class="fas fa-arrow-left me-1"></i> กลับหน้ารายการ
+            </a>
+        </div>
+    </div>
+
+    <!-- Top Stats Cards -->
+    <div class="row g-3 mb-4">
+        <!-- 1. ผู้อพยพปัจจุบัน -->
+        <div class="col-md-3">
+            <div class="card card-dashboard p-3">
+                <div class="d-flex align-items-center">
+                    <div class="icon-box bg-primary bg-opacity-10 text-primary me-3">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <div>
+                        <p class="mb-0 text-muted small">ผู้อพยพปัจจุบัน</p>
+                        <h4 class="mb-0 fw-bold"><?php echo number_format($total_evacuees); ?> <small class="fs-6 text-muted">คน</small></h4>
+                    </div>
+                </div>
+            </div>
         </div>
         
-        <?php if($role === 'admin'): ?>
-        <form class="d-flex" action="" method="GET">
-            <select name="shelter_id" class="form-select form-select-sm me-2" onchange="this.form.submit()">
-                <option value="">-- เลือกศูนย์เพื่อดูข้อมูล --</option>
-                <?php foreach($all_shelters as $s): ?>
-                    <option value="<?php echo $s['id']; ?>" <?php echo $shelter_id == $s['id'] ? 'selected' : ''; ?>>
-                        <?php echo htmlspecialchars($s['name']); ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </form>
-        <?php endif; ?>
-    </div>
-
-    <?php if(!$shelter_id): ?>
-        <div class="alert alert-info text-center py-5">
-            <i class="fas fa-search-location fa-3x mb-3"></i><br>
-            กรุณาเลือกศูนย์พักพิงที่ต้องการดูข้อมูล
-        </div>
-    <?php else: ?>
-
-    <!-- 1. Key Statistics Cards -->
-    <div class="row g-3 mb-4">
-        <!-- Total Population -->
+        <!-- 2. ความจุ -->
         <div class="col-md-3">
-            <div class="card card-stat bg-gradient-blue h-100 p-3">
-                <div class="stat-icon"><i class="fas fa-users"></i></div>
-                <div class="stat-value"><?php echo number_format($stats['total']); ?></div>
-                <div class="stat-label">ผู้พักพิงทั้งหมด (คน)</div>
-                <div class="mt-2 small text-white-50">
-                    ความจุ: <?php echo number_format($shelter_info['capacity'] ?? 0); ?>
+            <div class="card card-dashboard p-3">
+                <div class="d-flex align-items-center mb-2">
+                    <div class="icon-box bg-success bg-opacity-10 text-success me-3">
+                        <i class="fas fa-bed"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <p class="mb-0 text-muted small">ความหนาแน่น</p>
+                        <div class="d-flex justify-content-between align-items-end">
+                            <h4 class="mb-0 fw-bold"><?php echo number_format($percent_full, 1); ?>%</h4>
+                            <small class="text-muted"><?php echo number_format($total_evacuees) . "/" . number_format($capacity); ?></small>
+                        </div>
+                    </div>
+                </div>
+                <div class="progress" style="height: 6px;">
+                    <div class="progress-bar bg-<?php echo $percent_full > 90 ? 'danger' : ($percent_full > 70 ? 'warning' : 'success'); ?>" 
+                         style="width: <?php echo $percent_full; ?>%"></div>
                 </div>
             </div>
         </div>
-        <!-- Vulnerable -->
+
+        <!-- 3. กลุ่มเปราะบางรวม -->
         <div class="col-md-3">
-            <div class="card card-stat bg-gradient-pink h-100 p-3">
-                <div class="stat-icon"><i class="fas fa-wheelchair"></i></div>
-                <div class="stat-value"><?php echo number_format($stats['vulnerable']); ?></div>
-                <div class="stat-label">กลุ่มเปราะบาง/สูงอายุ</div>
-                <div class="mt-2 small text-white-50">ต้องการดูแลพิเศษ</div>
+            <div class="card card-dashboard p-3">
+                <div class="d-flex align-items-center">
+                    <div class="icon-box bg-warning bg-opacity-10 text-warning me-3">
+                        <i class="fas fa-wheelchair"></i>
+                    </div>
+                    <div>
+                        <p class="mb-0 text-muted small">กลุ่มเปราะบาง</p>
+                        <h4 class="mb-0 fw-bold">
+                            <?php echo number_format($vul_stats['kids'] + $vul_stats['elderly'] + $vul_stats['sick']); ?> 
+                            <small class="fs-6 text-muted">คน</small>
+                        </h4>
+                    </div>
+                </div>
             </div>
         </div>
-        <!-- Male -->
+
+        <!-- 4. สถานะ -->
         <div class="col-md-3">
-            <div class="card card-stat bg-success h-100 p-3 bg-opacity-75">
-                <div class="stat-icon"><i class="fas fa-male"></i></div>
-                <div class="stat-value"><?php echo number_format($stats['male']); ?></div>
-                <div class="stat-label">ชาย</div>
-            </div>
-        </div>
-        <!-- Female -->
-        <div class="col-md-3">
-            <div class="card card-stat bg-info h-100 p-3 bg-opacity-75">
-                <div class="stat-icon"><i class="fas fa-female"></i></div>
-                <div class="stat-value"><?php echo number_format($stats['female']); ?></div>
-                <div class="stat-label">หญิง</div>
+            <div class="card card-dashboard p-3">
+                <div class="d-flex align-items-center">
+                    <div class="icon-box bg-<?php echo $status_color; ?> bg-opacity-10 text-<?php echo $status_color; ?> me-3">
+                        <i class="fas fa-info-circle"></i>
+                    </div>
+                    <div>
+                        <p class="mb-0 text-muted small">สถานะศูนย์</p>
+                        <h4 class="mb-0 fw-bold text-<?php echo $status_color; ?>">
+                            <?php echo htmlspecialchars($shelter['status']); ?>
+                        </h4>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <div class="row g-4">
-        <!-- 2. Capacity & Age Charts -->
-        <div class="col-md-8">
-            <div class="card shadow-sm border-0 h-100">
-                <div class="card-header bg-white fw-bold py-3">
-                    <i class="fas fa-chart-bar me-2 text-warning"></i> โครงสร้างประชากร
+    <!-- Charts Section -->
+    <div class="row g-4 mb-4">
+        <!-- Gender Chart -->
+        <div class="col-md-4">
+            <div class="card card-dashboard">
+                <div class="card-header bg-white py-3">
+                    <h6 class="mb-0 fw-bold"><i class="fas fa-venus-mars text-info me-2"></i>สัดส่วน เพศ</h6>
                 </div>
                 <div class="card-body">
-                    <h6 class="text-muted mb-3">ช่วงอายุ (Age Groups)</h6>
-                    
-                    <div class="mb-4">
-                        <div class="d-flex justify-content-between mb-1">
-                            <span>เด็ก (0-14 ปี)</span>
-                            <span class="fw-bold"><?php echo number_format($stats['child']); ?> คน</span>
-                        </div>
-                        <div class="progress" style="height: 10px;">
-                            <?php $pct_child = $stats['total'] > 0 ? ($stats['child'] / $stats['total']) * 100 : 0; ?>
-                            <div class="progress-bar bg-info" role="progressbar" style="width: <?php echo $pct_child; ?>%"></div>
-                        </div>
-                    </div>
-
-                    <div class="mb-4">
-                        <div class="d-flex justify-content-between mb-1">
-                            <span>วัยทำงาน (15-59 ปี)</span>
-                            <span class="fw-bold"><?php echo number_format($stats['adult']); ?> คน</span>
-                        </div>
-                        <div class="progress" style="height: 10px;">
-                            <?php $pct_adult = $stats['total'] > 0 ? ($stats['adult'] / $stats['total']) * 100 : 0; ?>
-                            <div class="progress-bar bg-success" role="progressbar" style="width: <?php echo $pct_adult; ?>%"></div>
-                        </div>
-                    </div>
-
-                    <div class="mb-4">
-                        <div class="d-flex justify-content-between mb-1">
-                            <span>ผู้สูงอายุ (60+ ปี)</span>
-                            <span class="fw-bold"><?php echo number_format($stats['elderly']); ?> คน</span>
-                        </div>
-                        <div class="progress" style="height: 10px;">
-                            <?php $pct_eld = $stats['total'] > 0 ? ($stats['elderly'] / $stats['total']) * 100 : 0; ?>
-                            <div class="progress-bar bg-danger" role="progressbar" style="width: <?php echo $pct_eld; ?>%"></div>
-                        </div>
-                    </div>
-
-                    <hr>
-                    <h6 class="text-muted mb-3">อัตราการใช้พื้นที่ (Capacity)</h6>
-                    <?php 
-                        $cap = $shelter_info['capacity'] > 0 ? $shelter_info['capacity'] : 1;
-                        $usage_pct = ($stats['total'] / $cap) * 100;
-                        $bar_color = $usage_pct > 90 ? 'bg-danger' : ($usage_pct > 70 ? 'bg-warning' : 'bg-primary');
-                    ?>
-                    <div class="progress" style="height: 25px;">
-                        <div class="progress-bar <?php echo $bar_color; ?> progress-bar-striped" role="progressbar" style="width: <?php echo $usage_pct; ?>%">
-                            <?php echo number_format($usage_pct, 1); ?>%
-                        </div>
-                    </div>
-                    <small class="text-muted mt-2 d-block text-end">
-                        ใช้ไป <?php echo number_format($stats['total']); ?> จาก <?php echo number_format($cap); ?> ที่รองรับ
-                    </small>
+                    <canvas id="genderChart" style="max-height: 250px;"></canvas>
                 </div>
             </div>
         </div>
 
-        <!-- 3. Inventory Alerts -->
+        <!-- Vulnerable Groups Chart -->
         <div class="col-md-4">
-            <div class="card shadow-sm border-0 h-100">
-                <div class="card-header bg-white fw-bold py-3 text-danger">
-                    <i class="fas fa-exclamation-triangle me-2"></i> สินค้าใกล้หมด (Low Stock)
+            <div class="card card-dashboard">
+                <div class="card-header bg-white py-3">
+                    <h6 class="mb-0 fw-bold"><i class="fas fa-procedures text-danger me-2"></i>กลุ่มเปราะบาง</h6>
                 </div>
-                <div class="card-body p-0">
-                    <ul class="list-group list-group-flush">
-                        <?php if (empty($inventory_alert)): ?>
-                            <li class="list-group-item text-center py-4 text-muted">
-                                <i class="fas fa-check-circle text-success fa-2x mb-2"></i><br>
-                                สต็อกสินค้าปกติ
-                            </li>
-                        <?php else: ?>
-                            <?php foreach ($inventory_alert as $item): ?>
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
-                                    <div class="fw-bold text-dark"><?php echo htmlspecialchars($item['item_name']); ?></div>
-                                    <small class="text-muted">ควรเติมสินค้า</small>
-                                </div>
-                                <span class="badge bg-danger rounded-pill">
-                                    เหลือ <?php echo number_format($item['quantity']) . ' ' . $item['unit']; ?>
-                                </span>
-                            </li>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
+                <div class="card-body">
+                    <canvas id="vulChart" style="max-height: 250px;"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Actions / Contact Info -->
+        <div class="col-md-4">
+            <div class="card card-dashboard">
+                <div class="card-header bg-white py-3">
+                    <h6 class="mb-0 fw-bold"><i class="fas fa-address-book text-success me-2"></i>ข้อมูลติดต่อ & สั่งการ</h6>
+                </div>
+                <div class="card-body">
+                    <ul class="list-group list-group-flush mb-3">
+                        <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                            <span><i class="fas fa-user-tie text-muted me-2"></i>ผู้ดูแลศูนย์</span>
+                            <span class="fw-bold"><?php echo !empty($shelter['contact_person']) ? htmlspecialchars($shelter['contact_person']) : '-'; ?></span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                            <span><i class="fas fa-phone text-muted me-2"></i>เบอร์โทรศัพท์</span>
+                            <span class="fw-bold"><?php echo !empty($shelter['contact_phone']) ? htmlspecialchars($shelter['contact_phone']) : '-'; ?></span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                            <span><i class="fas fa-map-marked text-muted me-2"></i>พิกัด</span>
+                            <span>
+                                <?php if($shelter['latitude'] && $shelter['longitude']): ?>
+                                    <a href="https://www.google.com/maps?q=<?php echo $shelter['latitude']; ?>,<?php echo $shelter['longitude']; ?>" target="_blank" class="btn btn-sm btn-outline-primary rounded-pill">
+                                        <i class="fas fa-location-arrow"></i> นำทาง
+                                    </a>
+                                <?php else: ?>
+                                    <span class="text-muted small">ไม่ระบุ</span>
+                                <?php endif; ?>
+                            </span>
+                        </li>
                     </ul>
-                </div>
-                <div class="card-footer bg-white text-center border-top-0 pb-3">
-                    <a href="inventory_list.php" class="btn btn-sm btn-outline-primary w-100">จัดการคลังสินค้า</a>
+                    
+                    <div class="d-grid gap-2">
+                        <a href="evacuee_list.php?shelter_id=<?php echo $shelter_id; ?>" class="btn btn-primary">
+                            <i class="fas fa-list me-1"></i> จัดการรายชื่อผู้อพยพ
+                        </a>
+                        <a href="request_manager.php?shelter_id=<?php echo $shelter_id; ?>" class="btn btn-outline-danger">
+                            <i class="fas fa-hands-helping me-1"></i> ขอความช่วยเหลือ (Request)
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
-
-    <?php endif; ?>
 
 </div>
 
-<?php include 'includes/footer.php'; ?>
+<?php include('includes/footer.php'); ?>
+
+<!-- Chart Scripts -->
+<script>
+    // 1. Gender Chart
+    const genderCtx = document.getElementById('genderChart').getContext('2d');
+    new Chart(genderCtx, {
+        type: 'doughnut',
+        data: {
+            labels: ['ชาย', 'หญิง', 'อื่นๆ'],
+            datasets: [{
+                data: [<?php echo $gender_data['Male']; ?>, <?php echo $gender_data['Female']; ?>, <?php echo $gender_data['Other']; ?>],
+                backgroundColor: ['#36a2eb', '#ff6384', '#ffcd56'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom' }
+            }
+        }
+    });
+
+    // 2. Vulnerable Chart
+    const vulCtx = document.getElementById('vulChart').getContext('2d');
+    new Chart(vulCtx, {
+        type: 'bar',
+        data: {
+            labels: ['เด็ก (<12)', 'ผู้สูงอายุ (60+)', 'ผู้ป่วย/พิการ'],
+            datasets: [{
+                label: 'จำนวน (คน)',
+                data: [<?php echo (int)$vul_stats['kids']; ?>, <?php echo (int)$vul_stats['elderly']; ?>, <?php echo (int)$vul_stats['sick']; ?>],
+                backgroundColor: ['#20c997', '#fd7e14', '#dc3545'],
+                borderRadius: 5
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                y: { beginAtZero: true, ticks: { precision: 0 } }
+            }
+        }
+    });
+</script>
+
 </body>
 </html>

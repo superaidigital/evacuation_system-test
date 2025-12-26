@@ -1,6 +1,13 @@
 <?php
 // includes/header.php
+// ส่วนหัวของหน้าเว็บ (Navbar & Sidebar Structure) - ปรับปรุงให้รองรับ MySQLi
+
+// Start Session ถ้ายังไม่ได้เริ่ม
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
+
+// Config & DB Connection (เผื่อกรณีไฟล์ไหนลืม include)
+require_once __DIR__ . '/../config/db.php'; 
+
 $current_page = basename($_SERVER['PHP_SELF']);
 $menu_context = isset($_GET['menu']) ? $_GET['menu'] : '';
 
@@ -13,18 +20,21 @@ $is_donation = ($role === 'donation_officer');
 // สำหรับ Staff ให้ดึง Shelter ID ของตัวเองมาใช้ใน Link
 $my_shelter_id = $_SESSION['shelter_id'] ?? '';
 
-// --- เพิ่มเติม: ดึงชื่อศูนย์ที่รับผิดชอบมาแสดงใน Sidebar ---
+// --- เพิ่มเติม: ดึงชื่อศูนย์ที่รับผิดชอบมาแสดงใน Sidebar (MySQLi Version) ---
 $user_shelter_name = '';
-if ($my_shelter_id && isset($pdo)) {
-    try {
-        $stmt_sh = $pdo->prepare("SELECT name FROM shelters WHERE id = ?");
-        $stmt_sh->execute([$my_shelter_id]);
-        $res_sh = $stmt_sh->fetch(PDO::FETCH_ASSOC);
-        if ($res_sh) {
-            $user_shelter_name = $res_sh['name'];
+if ($my_shelter_id && isset($conn)) {
+    // ใช้ MySQLi แทน PDO
+    $sql_sh = "SELECT name FROM shelters WHERE id = ?";
+    $stmt_sh = $conn->prepare($sql_sh);
+    if ($stmt_sh) {
+        $stmt_sh->bind_param("i", $my_shelter_id);
+        if ($stmt_sh->execute()) {
+            $res_sh = $stmt_sh->get_result();
+            if ($row_sh = $res_sh->fetch_assoc()) {
+                $user_shelter_name = $row_sh['name'];
+            }
         }
-    } catch (Exception $e) {
-        // กรณี Query ผิดพลาด ไม่ต้องแสดงชื่อศูนย์
+        $stmt_sh->close();
     }
 }
 ?>
@@ -171,6 +181,7 @@ if ($my_shelter_id && isset($pdo)) {
             justify-content: center;
             font-weight: bold;
             font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .user-info-text {
@@ -503,6 +514,13 @@ if ($my_shelter_id && isset($pdo)) {
                         <div class="d-flex align-items-center w-100"><i class="fas fa-hand-holding-heart"></i> Dashboard การรับบริจาค</div>
                     </a>
                 </li>
+                
+                <!-- เมนูใหม่: ประกาศ -->
+                <li>
+                    <a href="announcement_manager.php" class="<?php echo ($current_page == 'announcement_manager.php') ? 'active' : ''; ?>">
+                         <div class="d-flex align-items-center w-100"><i class="fas fa-bullhorn"></i> ข่าวสาร/ประกาศ</div>
+                    </a>
+                </li>
 
                 <?php if ($is_admin || $is_donation): ?>
                 <li>
@@ -569,6 +587,7 @@ if ($my_shelter_id && isset($pdo)) {
                         elseif(strpos($current_page, 'distribution') !== false || strpos($current_page, 'inventory') !== false) echo 'บริหารจัดการทรัพยากร';
                         elseif(strpos($current_page, 'gis') !== false) echo 'แผนที่สถานการณ์ (GIS)';
                         elseif(strpos($current_page, 'health') !== false) echo 'สถานการณ์สุขภาพ';
+                        elseif(strpos($current_page, 'announcement') !== false) echo 'ข่าวสาร/ประกาศ';
                         else echo 'ระบบบริหารจัดการ';
                     ?>
                 </div>
@@ -605,4 +624,33 @@ if ($my_shelter_id && isset($pdo)) {
             }
         });
     }
+
+    // Toggle Sidebar Script (Embed here to ensure it works)
+    document.addEventListener("DOMContentLoaded", function () {
+        const sidebar = document.getElementById('sidebar');
+        const content = document.getElementById('content');
+        const sidebarCollapse = document.getElementById('sidebarCollapse');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+
+        function toggleSidebar() {
+            if (window.innerWidth <= 991.98) {
+                sidebar.classList.toggle('show-mobile');
+                mobileOverlay.classList.toggle('show');
+            } else {
+                sidebar.classList.toggle('collapsed');
+                content.classList.toggle('expanded');
+            }
+        }
+
+        if (sidebarCollapse) {
+            sidebarCollapse.addEventListener('click', toggleSidebar);
+        }
+
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', function() {
+                sidebar.classList.remove('show-mobile');
+                mobileOverlay.classList.remove('show');
+            });
+        }
+    });
 </script>
