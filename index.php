@@ -1,292 +1,243 @@
 <?php
-// index.php
-require_once 'config/db.php';
-session_start();
+/**
+ * index.php
+ * หน้าหลักของระบบ (Main Landing Dashboard)
+ * ปรับปรุงให้แสดงผลตามระดับสิทธิ์ (Admin / Staff / Resource Officer)
+ */
 
+require_once 'config/db.php';
+require_once 'includes/functions.php';
+require_once 'includes/header.php';
+
+// ตรวจสอบการเข้าสู่ระบบ
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
 }
 
-// 1. ดึงเหตุการณ์ปัจจุบัน (Active Incident)
-$stmt_inc = $pdo->query("SELECT * FROM incidents WHERE status = 'active' ORDER BY id DESC LIMIT 1");
-$current_incident = $stmt_inc->fetch();
+$user_id = $_SESSION['user_id'];
+$role = $_SESSION['role'] ?? 'guest';
+$my_shelter_id = $_SESSION['shelter_id'] ?? 0;
 
-$incident_id = $current_incident ? $current_incident['id'] : 0;
-$incident_name = $current_incident ? $current_incident['name'] : 'ไม่มีสถานการณ์ภัยพิบัติ (Normal State)';
-$is_active = $current_incident ? true : false;
-
-// 2. ดึงสถิติเบื้องต้น
+// เตรียมตัวแปรสถิติ
 $stats = [
-    'evacuees' => 0,
-    'shelters' => 0,
-    'capacity' => 0,
-    'staff' => 0
+    'total_evacuees' => 0,
+    'vulnerable' => 0,
+    'capacity_percent' => 0,
+    'pending_requests' => 0,
+    'low_stock' => 0
 ];
 
-if ($incident_id) {
-    // ผู้ประสบภัยที่ยังพักอยู่
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM evacuees WHERE incident_id = ? AND check_out_date IS NULL");
-    $stmt->execute([$incident_id]);
-    $stats['evacuees'] = $stmt->fetchColumn();
+try {
+    if ($role === 'admin') {
+        // --- มุมมอง Admin: ภาพรวมทั้งจังหวัด ---
+        $res = $conn->query("SELECT 
+            (SELECT COUNT(*) FROM evacuees WHERE check_out_date IS NULL) as current_stay,
+            (SELECT COUNT(*) FROM evacuees WHERE check_out_date IS NULL AND (age < 15 OR age >= 60)) as vulnerable,
+            (SELECT SUM(capacity) FROM shelters) as total_cap,
+            (SELECT COUNT(*) FROM requests WHERE status = 'pending') as pending_req,
+            (SELECT COUNT(*) FROM inventory WHERE quantity < 50) as low_inv");
+        $data = $res->fetch_assoc();
+        
+        $stats['total_evacuees'] = $data['current_stay'];
+        $stats['vulnerable'] = $data['vulnerable'];
+        $stats['pending_requests'] = $data['pending_req'];
+        $stats['low_stock'] = $data['low_inv'];
+        $stats['capacity_percent'] = ($data['total_cap'] > 0) ? ($data['current_stay'] / $data['total_cap']) * 100 : 0;
 
-    // ศูนย์ที่เปิดใช้งาน
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM shelters WHERE incident_id = ?");
-    $stmt->execute([$incident_id]);
-    $stats['shelters'] = $stmt->fetchColumn();
+    } else {
+        // --- มุมมอง Staff: เฉพาะศูนย์ที่รับผิดชอบ ---
+        $stmt = $conn->prepare("SELECT 
+            (SELECT COUNT(*) FROM evacuees WHERE shelter_id = ? AND check_out_date IS NULL) as current_stay,
+            (SELECT COUNT(*) FROM evacuees WHERE shelter_id = ? AND check_out_date IS NULL AND (age < 15 OR age >= 60)) as vulnerable,
+            (SELECT capacity FROM shelters WHERE id = ?) as total_cap,
+            (SELECT COUNT(*) FROM requests WHERE shelter_id = ? AND status = 'pending') as pending_req");
+        $stmt->bind_param("iiii", $my_shelter_id, $my_shelter_id, $my_shelter_id, $my_shelter_id);
+        $stmt->execute();
+        $data = $stmt->get_result()->fetch_assoc();
 
-    // ความจุรวมทั้งหมดของศูนย์ในเหตุการณ์นี้
-    $stmt = $pdo->prepare("SELECT SUM(capacity) FROM shelters WHERE incident_id = ?");
-    $stmt->execute([$incident_id]);
-    $stats['capacity'] = $stmt->fetchColumn();
+        $stats['total_evacuees'] = $data['current_stay'];
+        $stats['vulnerable'] = $data['vulnerable'];
+        $stats['pending_requests'] = $data['pending_req'];
+        $stats['capacity_percent'] = ($data['total_cap'] > 0) ? ($data['current_stay'] / $data['total_cap']) * 100 : 0;
+    }
 
-    // เจ้าหน้าที่ปฏิบัติงาน (ผู้ดูแล)
-    $stmt = $pdo->prepare("SELECT COUNT(DISTINCT c.id) FROM caretakers c JOIN shelters s ON c.shelter_id = s.id WHERE s.incident_id = ?");
-    $stmt->execute([$incident_id]);
-    $stats['staff'] = $stmt->fetchColumn();
+    // ดึงข่าวประกาศล่าสุด 3 รายการ
+    $announcements = $conn->query("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 3")->fetch_all(MYSQLI_ASSOC);
+
+} catch (Exception $e) {
+    error_log($e->getMessage());
 }
 ?>
 
-<!DOCTYPE html>
-<html lang="th">
-<head>
-    <style>
-        .dashboard-header {
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            color: white;
-            padding: 2rem;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .dashboard-header::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            right: 0;
-            width: 200px;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05));
-            transform: skewX(-20deg);
-        }
-
-        .status-badge {
-            background-color: rgba(251, 191, 36, 0.2);
-            color: #fbbf24;
-            border: 1px solid rgba(251, 191, 36, 0.4);
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .pulse-dot {
-            width: 8px;
-            height: 8px;
-            background-color: #fbbf24;
-            border-radius: 50%;
-            display: inline-block;
-            box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.7);
-            animation: pulse-gold 2s infinite;
-        }
-
-        @keyframes pulse-gold {
-            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.7); }
-            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(251, 191, 36, 0); }
-            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
-        }
-
-        .stat-card {
-            background: white;
-            border-radius: 10px;
-            padding: 1.5rem;
-            border: 1px solid #e2e8f0;
-            transition: transform 0.2s, box-shadow 0.2s;
-            height: 100%;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
-            border-color: #cbd5e1;
-        }
-
-        .stat-card.primary { border-left: 4px solid #0f172a; }
-        .stat-card.warning { border-left: 4px solid #fbbf24; }
-        .stat-card.success { border-left: 4px solid #10b981; }
-        .stat-card.info { border-left: 4px solid #3b82f6; }
-
-        .stat-icon {
-            position: absolute;
-            right: 1.5rem;
-            top: 1.5rem;
-            font-size: 2.5rem;
-            opacity: 0.1;
-        }
-
-        .quick-action-btn {
-            display: flex;
-            align-items: center;
-            padding: 1rem;
-            background: white;
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            text-decoration: none;
-            color: #334155;
-            transition: all 0.2s;
-        }
-
-        .quick-action-btn:hover {
-            background: #f8fafc;
-            border-color: #94a3b8;
-            color: #0f172a;
-        }
-
-        .icon-box {
-            width: 45px;
-            height: 45px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-            margin-right: 15px;
-        }
-    </style>
-</head>
-<body class="bg-light">
-
-<?php include 'includes/header.php'; ?>
-
-<div class="container-fluid">
-    
-    <!-- Header Section -->
-    <div class="dashboard-header mb-4">
-        <div class="row align-items-center">
-            <div class="col-md-8">
-                <div class="text-white-50 text-uppercase small fw-bold mb-1">Overview Dashboard</div>
-                <h2 class="fw-bold mb-2">ภาพรวมสถานการณ์ภัยพิบัติ</h2>
-                <div class="d-flex align-items-center gap-3">
-                    <span class="status-badge">
-                        <?php if($is_active): ?>
-                            <span class="pulse-dot"></span> สถานการณ์ปัจจุบัน: <?php echo htmlspecialchars($incident_name); ?>
-                        <?php else: ?>
-                            <i class="fas fa-check-circle"></i> ปกติ (ไม่มีเหตุการณ์)
-                        <?php endif; ?>
-                    </span>
-                    <small class="text-white-50"><i class="far fa-clock"></i> ข้อมูลล่าสุด: <?php echo date('H:i น.'); ?></small>
-                </div>
-            </div>
-            <div class="col-md-4 text-md-end mt-3 mt-md-0">
-                <?php if($_SESSION['role'] == 'admin'): ?>
-                <a href="incident_manager.php" class="btn btn-outline-warning btn-sm">
-                    <i class="fas fa-cog"></i> จัดการเหตุการณ์
-                </a>
-                <?php endif; ?>
-                <a href="monitor_dashboard.php" target="_blank" class="btn btn-light text-primary btn-sm ms-2">
-                    <i class="fas fa-desktop"></i> เปิด War Room
+<div class="container-fluid py-4">
+    <!-- Welcome Header -->
+    <div class="row mb-4">
+        <div class="col-md-7">
+            <h2 class="fw-bold text-dark mb-1">สวัสดีคุณ <?php echo $_SESSION['username']; ?></h2>
+            <p class="text-muted">ยินดีต้อนรับสู่ระบบบริหารจัดการศูนย์พักพิง (<?php echo $role === 'admin' ? 'โหมดส่วนกลาง' : 'โหมดปฏิบัติการ'; ?>)</p>
+        </div>
+        <div class="col-md-5 text-md-end">
+            <div class="btn-group shadow-sm">
+                <a href="qr_scanner.php" class="btn btn-primary fw-bold px-4 py-2">
+                    <i class="fas fa-qrcode me-2"></i> สแกนบัตร (Check-in/จ่ายของ)
                 </a>
             </div>
         </div>
     </div>
 
-    <!-- Stats Grid -->
+    <!-- Stats Card Row -->
     <div class="row g-4 mb-4">
-        <!-- Card 1: ผู้ประสบภัย -->
-        <div class="col-md-3 col-sm-6">
-            <div class="stat-card primary">
-                <i class="fas fa-users stat-icon text-primary"></i>
-                <h6 class="text-muted text-uppercase small fw-bold">ผู้ประสบภัย (ปัจจุบัน)</h6>
-                <h2 class="fw-bold text-dark mt-2 mb-0"><?php echo number_format($stats['evacuees']); ?></h2>
-                <small class="text-muted">คน</small>
-            </div>
-        </div>
-
-        <!-- Card 2: ศูนย์ที่เปิด -->
-        <div class="col-md-3 col-sm-6">
-            <div class="stat-card success">
-                <i class="fas fa-campground stat-icon text-success"></i>
-                <h6 class="text-muted text-uppercase small fw-bold">ศูนย์พักพิงที่เปิด</h6>
-                <h2 class="fw-bold text-dark mt-2 mb-0"><?php echo number_format($stats['shelters']); ?></h2>
-                <small class="text-success">
-                    <i class="fas fa-check"></i> พร้อมให้บริการ
-                </small>
-            </div>
-        </div>
-
-        <!-- Card 3: อัตราการครองเตียง -->
-        <div class="col-md-3 col-sm-6">
-            <div class="stat-card warning">
-                <i class="fas fa-bed stat-icon text-warning"></i>
-                <h6 class="text-muted text-uppercase small fw-bold">ความจุรองรับได้</h6>
-                <?php 
-                    $percent = ($stats['capacity'] > 0) ? ($stats['evacuees'] / $stats['capacity']) * 100 : 0;
-                ?>
-                <h2 class="fw-bold text-dark mt-2 mb-0"><?php echo number_format($percent, 1); ?>%</h2>
-                <div class="progress mt-2" style="height: 4px;">
-                    <div class="progress-bar bg-warning" role="progressbar" style="width: <?php echo $percent; ?>%"></div>
+        <div class="col-xl-3 col-md-6">
+            <div class="card border-0 shadow-sm rounded-4 border-start border-5 border-primary">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small text-uppercase fw-bold mb-1">ผู้อพยพปัจจุบัน</div>
+                            <h2 class="fw-bold mb-0 text-primary"><?php echo number_format($stats['total_evacuees']); ?></h2>
+                        </div>
+                        <div class="bg-primary bg-opacity-10 p-3 rounded-3"><i class="fas fa-users text-primary fa-lg"></i></div>
+                    </div>
                 </div>
             </div>
         </div>
-
-        <!-- Card 4: เจ้าหน้าที่ -->
-        <div class="col-md-3 col-sm-6">
-            <div class="stat-card info">
-                <i class="fas fa-user-shield stat-icon text-info"></i>
-                <h6 class="text-muted text-uppercase small fw-bold">เจ้าหน้าที่ปฏิบัติงาน</h6>
-                <h2 class="fw-bold text-dark mt-2 mb-0"><?php echo number_format($stats['staff']); ?></h2>
-                <small class="text-muted">นาย</small>
+        <div class="col-xl-3 col-md-6">
+            <div class="card border-0 shadow-sm rounded-4 border-start border-5 border-warning">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small text-uppercase fw-bold mb-1">กลุ่มเปราะบาง</div>
+                            <h2 class="fw-bold mb-0 text-warning"><?php echo number_format($stats['vulnerable']); ?></h2>
+                        </div>
+                        <div class="bg-warning bg-opacity-10 p-3 rounded-3"><i class="fas fa-heart text-warning fa-lg"></i></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+            <div class="card border-0 shadow-sm rounded-4 border-start border-5 border-danger">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small text-uppercase fw-bold mb-1">คำร้องค้างจ่าย</div>
+                            <h2 class="fw-bold mb-0 text-danger"><?php echo number_format($stats['pending_requests']); ?></h2>
+                        </div>
+                        <div class="bg-danger bg-opacity-10 p-3 rounded-3"><i class="fas fa-hand-holding-heart text-danger fa-lg"></i></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-3 col-md-6">
+            <div class="card border-0 shadow-sm rounded-4 border-start border-5 border-info">
+                <div class="card-body p-4">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <div class="text-muted small text-uppercase fw-bold mb-1">ความหนาแน่น</div>
+                            <h2 class="fw-bold mb-0 text-info"><?php echo round($stats['capacity_percent']); ?>%</h2>
+                        </div>
+                        <div class="bg-info bg-opacity-10 p-3 rounded-3"><i class="fas fa-hotel text-info fa-lg"></i></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Quick Actions -->
-    <h5 class="fw-bold text-secondary mb-3"><i class="fas fa-bolt text-warning"></i> เมนูด่วน (Quick Actions)</h5>
-    <div class="row g-3">
-        <div class="col-md-4">
-            <a href="evacuee_form.php?mode=add" class="quick-action-btn">
-                <div class="icon-box bg-primary text-white">
-                    <i class="fas fa-user-plus"></i>
+    <div class="row g-4">
+        <!-- ทางลัดระบบงาน (Quick Links) -->
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm rounded-4 mb-4">
+                <div class="card-header bg-white py-3 border-0">
+                    <h5 class="mb-0 fw-bold"><i class="fas fa-rocket me-2 text-primary"></i>ทางลัดเมนูปฏิบัติงาน</h5>
                 </div>
-                <div>
-                    <div class="fw-bold">ลงทะเบียนรายใหม่</div>
-                    <small class="text-muted">บันทึกข้อมูลผู้ประสบภัยเข้าสู่ระบบ</small>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <a href="evacuee_list.php?shelter_id=<?php echo $my_shelter_id ?: 'all'; ?>" class="text-decoration-none">
+                                <div class="p-3 border rounded-3 text-center hover-shadow transition-all bg-light">
+                                    <i class="fas fa-address-book fa-2x mb-2 text-primary"></i>
+                                    <div class="fw-bold text-dark small">บัญชีรายชื่อ (Roster)</div>
+                                </div>
+                            </a>
+                        </div>
+                        <div class="col-md-4">
+                            <a href="distribution_manager.php" class="text-decoration-none">
+                                <div class="p-3 border rounded-3 text-center hover-shadow transition-all bg-light">
+                                    <i class="fas fa-box-open fa-2x mb-2 text-success"></i>
+                                    <div class="fw-bold text-dark small">บันทึกแจกของ</div>
+                                </div>
+                            </a>
+                        </div>
+                        <div class="col-md-4">
+                            <a href="request_manager.php" class="text-decoration-none">
+                                <div class="p-3 border rounded-3 text-center hover-shadow transition-all bg-light">
+                                    <i class="fas fa-paper-plane fa-2x mb-2 text-warning"></i>
+                                    <div class="fw-bold text-dark small">ส่งคำร้องขอพัสดุ</div>
+                                </div>
+                            </a>
+                        </div>
+                        <div class="col-md-4">
+                            <a href="gis_dashboard.php" class="text-decoration-none">
+                                <div class="p-3 border rounded-3 text-center hover-shadow transition-all bg-light">
+                                    <i class="fas fa-map-marked-alt fa-2x mb-2 text-info"></i>
+                                    <div class="fw-bold text-dark small">แผนที่สถานการณ์</div>
+                                </div>
+                            </a>
+                        </div>
+                        <div class="col-md-4">
+                            <a href="inventory_dashboard.php" class="text-decoration-none">
+                                <div class="p-3 border rounded-3 text-center hover-shadow transition-all bg-light">
+                                    <i class="fas fa-warehouse fa-2x mb-2 text-dark"></i>
+                                    <div class="fw-bold text-dark small">คลังทรัพยากร</div>
+                                </div>
+                            </a>
+                        </div>
+                        <div class="col-md-4">
+                            <a href="monitor_dashboard.php" target="_blank" class="text-decoration-none">
+                                <div class="p-3 border rounded-3 text-center hover-shadow transition-all bg-light">
+                                    <i class="fas fa-desktop fa-2x mb-2 text-danger"></i>
+                                    <div class="fw-bold text-dark small">เปิดจอ War Room</div>
+                                </div>
+                            </a>
+                        </div>
+                    </div>
                 </div>
-            </a>
+            </div>
         </div>
-        <div class="col-md-4">
-            <a href="search_evacuee.php" class="quick-action-btn">
-                <div class="icon-box bg-success text-white">
-                    <i class="fas fa-search"></i>
+
+        <!-- ข่าวสารและประกาศล่าสุด -->
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-header bg-white py-3 border-0 d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0 fw-bold"><i class="fas fa-bullhorn me-2 text-warning"></i>ประกาศล่าสุด</h5>
+                    <a href="announcement_manager.php" class="small text-decoration-none">ดูทั้งหมด</a>
                 </div>
-                <div>
-                    <div class="fw-bold">ค้นหาข้อมูลบุคคล</div>
-                    <small class="text-muted">ตรวจสอบประวัติการเข้าพักพิง</small>
+                <div class="card-body">
+                    <?php if(!empty($announcements)): ?>
+                        <?php foreach($announcements as $news): ?>
+                            <div class="mb-3 pb-3 border-bottom border-light">
+                                <h6 class="fw-bold text-dark mb-1"><?php echo htmlspecialchars($news['title']); ?></h6>
+                                <p class="small text-muted mb-1 text-truncate"><?php echo strip_tags($news['content']); ?></p>
+                                <small class="text-muted" style="font-size: 0.7rem;">
+                                    <i class="far fa-clock me-1"></i><?php echo thai_date($news['created_at']); ?>
+                                </small>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <div class="text-center py-5 text-muted small">ยังไม่มีประกาศใหม่ในขณะนี้</div>
+                    <?php endif; ?>
                 </div>
-            </a>
-        </div>
-        <div class="col-md-4">
-            <a href="report.php" class="quick-action-btn">
-                <div class="icon-box bg-secondary text-white">
-                    <i class="fas fa-print"></i>
-                </div>
-                <div>
-                    <div class="fw-bold">ออกรายงานสรุป</div>
-                    <small class="text-muted">พิมพ์รายงานประจำวัน/ส่งออก Excel</small>
-                </div>
-            </a>
+            </div>
         </div>
     </div>
-
 </div>
 
+<style>
+    .hover-shadow:hover { 
+        box-shadow: 0 .5rem 1rem rgba(0,0,0,.15)!important; 
+        background-color: #fff !important; 
+        border-color: var(--active-gold) !important;
+    }
+    .transition-all { transition: all 0.3s ease; }
+</style>
+
 <?php include 'includes/footer.php'; ?>
-</body>
-</html>

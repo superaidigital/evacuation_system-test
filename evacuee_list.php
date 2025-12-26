@@ -1,7 +1,11 @@
 <?php
-// evacuee_list.php
+/**
+ * evacuee_list.php
+ * หน้าแสดงรายชื่อผู้ประสบภัย/ผู้อพยพ
+ * ปรับปรุง: รองรับค่า shelter_id = 'all' และใช้ระบบ MySQLi
+ */
 require_once 'config/db.php';
-require_once 'includes/functions.php'; // เรียกใช้ thaiDate() และ renderPagination()
+require_once 'includes/functions.php'; 
 if (session_status() == PHP_SESSION_NONE) { session_start(); }
 
 if (!isset($_SESSION['user_id'])) {
@@ -9,336 +13,224 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// 1. รับค่ารหัสศูนย์พักพิง (รองรับทั้งตัวเลข และ 'all')
 $shelter_id = isset($_GET['shelter_id']) ? $_GET['shelter_id'] : '';
 
 if (!$shelter_id) {
-    die("ไม่ระบุรหัสศูนย์พักพิง");
+    die("<div class='alert alert-danger'>ไม่ระบุรหัสศูนย์พักพิง</div>");
 }
 
 // --- Pagination Setup ---
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-$limit = 20; // จำนวนรายการต่อหน้า
+$limit = 20; 
 $offset = ($page - 1) * $limit;
 
-// 1. ดึงข้อมูลศูนย์พักพิง
-$sql_shelter = "SELECT s.*, i.name as incident_name, i.status as incident_status 
-                FROM shelters s 
-                JOIN incidents i ON s.incident_id = i.id 
-                WHERE s.id = ?";
-$stmt = $pdo->prepare($sql_shelter);
-$stmt->execute([$shelter_id]);
-$shelter = $stmt->fetch();
+try {
+    if ($shelter_id === 'all') {
+        // --- กรณีดูทุกศูนย์พักพิง ---
+        $shelter = [
+            'id' => 'all',
+            'name' => 'ทุกศูนย์พักพิง (ภาพรวม)',
+            'incident_name' => 'สรุปสถานการณ์รวมทุกพื้นที่',
+            'location' => 'ครอบคลุมทุกพื้นที่อพยพ',
+            'contact_phone' => 'สายด่วน 1784',
+            'capacity' => 0
+        ];
 
-if (!$shelter) {
-    die("ไม่พบข้อมูลศูนย์พักพิง");
+        // ดึงความจุรวมทั้งหมด
+        $res_cap = $conn->query("SELECT SUM(capacity) as total_cap FROM shelters");
+        $row_cap = $res_cap->fetch_assoc();
+        $shelter['capacity'] = $row_cap['total_cap'] ?: 0;
+
+        // นับจำนวนผู้ประสบภัยทั้งหมด
+        $sql_count = "SELECT COUNT(*) as total FROM evacuees WHERE check_out_date IS NULL";
+        $total_records = $conn->query($sql_count)->fetch_assoc()['total'];
+
+        // ดึงรายชื่อผู้ประสบภัยทั้งหมด (แสดงชื่อศูนย์ด้วย)
+        $sql_list = "SELECT e.*, s.name as shelter_name 
+                     FROM evacuees e 
+                     LEFT JOIN shelters s ON e.shelter_id = s.id 
+                     WHERE e.check_out_date IS NULL 
+                     ORDER BY e.created_at DESC LIMIT ?, ?";
+        $stmt = $conn->prepare($sql_list);
+        $stmt->bind_param("ii", $offset, $limit);
+        
+    } else {
+        // --- กรณีดูเฉพาะศูนย์ใดศูนย์หนึ่ง ---
+        $sql_sh = "SELECT s.*, i.name as incident_name 
+                   FROM shelters s 
+                   LEFT JOIN incidents i ON s.incident_id = i.id 
+                   WHERE s.id = ?";
+        $stmt_sh = $conn->prepare($sql_sh);
+        $id_int = (int)$shelter_id;
+        $stmt_sh->bind_param("i", $id_int);
+        $stmt_sh->execute();
+        $shelter = $stmt_sh->get_result()->fetch_assoc();
+
+        if (!$shelter) {
+            die("<div class='container mt-5 alert alert-warning'>ไม่พบข้อมูลศูนย์พักพิงที่ระบุ</div>");
+        }
+
+        // นับจำนวนในศูนย์นี้
+        $sql_count = "SELECT COUNT(*) as total FROM evacuees WHERE shelter_id = ? AND check_out_date IS NULL";
+        $stmt_c = $conn->prepare($sql_count);
+        $stmt_c->bind_param("i", $id_int);
+        $stmt_c->execute();
+        $total_records = $stmt_c->get_result()->fetch_assoc()['total'];
+
+        // ดึงรายชื่อในศูนย์นี้
+        $sql_list = "SELECT e.*, ? as shelter_name 
+                     FROM evacuees e 
+                     WHERE e.shelter_id = ? AND e.check_out_date IS NULL 
+                     ORDER BY e.created_at DESC LIMIT ?, ?";
+        $stmt = $conn->prepare($sql_list);
+        $stmt->bind_param("siii", $shelter['name'], $id_int, $offset, $limit);
+    }
+
+    $stmt->execute();
+    $evacuees = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $total_pages = ceil($total_records / $limit);
+
+    // 4. สรุปสถิติสำหรับกลุ่มเปราะบาง (Vulnerable)
+    $where_clause = ($shelter_id === 'all') ? "WHERE check_out_date IS NULL" : "WHERE shelter_id = " . (int)$shelter_id . " AND check_out_date IS NULL";
+    $sql_vun = "SELECT COUNT(*) as v_count FROM evacuees $where_clause AND (age < 15 OR age >= 60 OR (health_condition != '' AND health_condition IS NOT NULL))";
+    $vulnerable_count = $conn->query($sql_vun)->fetch_assoc()['v_count'];
+
+} catch (Exception $e) {
+    die("Database Error: " . $e->getMessage());
 }
 
-// 2. ดึงจำนวนผู้ประสบภัยทั้งหมด (สำหรับ Pagination)
-$sql_count = "SELECT COUNT(*) FROM evacuees WHERE shelter_id = ?";
-$stmt_count = $pdo->prepare($sql_count);
-$stmt_count->execute([$shelter_id]);
-$total_records = $stmt_count->fetchColumn();
-$total_pages = ceil($total_records / $limit);
-
-// 3. ดึงรายชื่อผู้ประสบภัย (พร้อม LIMIT)
-// FIX: เปลี่ยนจากการใช้ ? ผสมกับ Named Parameter เป็น Named Parameter ทั้งหมด
-$sql_list = "SELECT * FROM evacuees WHERE shelter_id = :shelter_id ORDER BY check_in_date DESC, id DESC LIMIT :limit OFFSET :offset";
-$stmt = $pdo->prepare($sql_list);
-$stmt->bindValue(':shelter_id', $shelter_id);
-$stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-$stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-$stmt->execute();
-$evacuees = $stmt->fetchAll();
-
-// 4. คำนวณสถิติเบื้องต้น (ต้องนับจากทั้งหมด ไม่ใช่แค่หน้าปัจจุบัน จึงต้อง Query แยก หรือใช้ View)
-// เพื่อประสิทธิภาพ เราจะ Query Count แยกตามเงื่อนไข
-$stmt_stats = $pdo->prepare("SELECT 
-    COUNT(*) as total,
-    SUM(CASE WHEN check_out_date IS NULL THEN 1 ELSE 0 END) as staying,
-    SUM(CASE WHEN check_out_date IS NULL AND gender = 'male' THEN 1 ELSE 0 END) as male,
-    SUM(CASE WHEN check_out_date IS NULL AND gender = 'female' THEN 1 ELSE 0 END) as female,
-    SUM(CASE WHEN check_out_date IS NULL AND (age < 15 OR age >= 60 OR health_condition != '' AND health_condition IS NOT NULL) THEN 1 ELSE 0 END) as vulnerable
-    FROM evacuees WHERE shelter_id = ?");
-$stmt_stats->execute([$shelter_id]);
-$stats = $stmt_stats->fetch();
+include 'includes/header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="th">
-<head>
-    <style>
-        .shelter-header {
-            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-            color: white;
-            padding: 25px;
-            border-radius: 10px;
-            margin-bottom: 25px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            border-left: 5px solid #fbbf24; /* Gold accent */
-        }
+<style>
+    .shelter-header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; padding: 25px; border-radius: 12px; margin-bottom: 25px; border-left: 5px solid #fbbf24; }
+    .stat-mini-card { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px; text-align: center; }
+</style>
 
-        .mini-stat-card {
-            background: white;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            padding: 15px;
-            text-align: center;
-            transition: all 0.2s;
-        }
-        .mini-stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        .mini-stat-value { font-size: 1.5rem; font-weight: 700; color: #0f172a; }
-        .mini-stat-label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; font-weight: 600; }
-
-        .table-custom thead th {
-            background-color: #f1f5f9;
-            color: #475569;
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 0.85rem;
-            border-bottom: 2px solid #e2e8f0;
-        }
-        
-        .status-badge {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        .status-staying { background-color: #dcfce7; color: #166534; }
-        .status-left { background-color: #f1f5f9; color: #64748b; }
-        
-        .btn-action { width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; }
-    </style>
-</head>
-<body class="bg-light">
-
-<?php include 'includes/header.php'; ?>
-
-<div class="container-fluid px-4">
-    
-    <!-- Shelter Header Info -->
-    <div class="shelter-header">
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                <span class="badge bg-warning text-dark mb-2">
-                    <i class="fas fa-layer-group me-1"></i> <?php echo htmlspecialchars($shelter['incident_name']); ?>
-                </span>
-                <h3 class="mb-1 fw-bold"><?php echo htmlspecialchars($shelter['name']); ?></h3>
-                <div class="opacity-75">
-                    <i class="fas fa-map-marker-alt me-2"></i> <?php echo htmlspecialchars($shelter['location']); ?>
-                    <span class="mx-2">|</span>
-                    <i class="fas fa-phone me-2"></i> <?php echo htmlspecialchars($shelter['contact_phone']); ?>
+<div class="container-fluid px-4 py-3">
+    <!-- Header -->
+    <div class="shelter-header shadow-sm">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <span class="badge bg-warning text-dark mb-2"><?php echo h($shelter['incident_name']); ?></span>
+                <h2 class="fw-bold mb-1"><?php echo h($shelter['name']); ?></h2>
+                <div class="opacity-75 small">
+                    <i class="fas fa-map-marker-alt me-1"></i> <?php echo h($shelter['location']); ?> | 
+                    <i class="fas fa-phone-alt me-1"></i> <?php echo h($shelter['contact_phone']); ?>
                 </div>
             </div>
-            <div class="text-end">
-                <a href="evacuee_form.php?shelter_id=<?php echo $shelter_id; ?>&mode=add" class="btn btn-primary btn-lg shadow-sm fw-bold">
-                    <i class="fas fa-user-plus me-2"></i> ลงทะเบียนรายใหม่
-                </a>
+            <div class="col-md-4 text-md-end mt-3 mt-md-0">
+                <a href="qr_scanner.php" class="btn btn-outline-light me-1"><i class="fas fa-qrcode me-1"></i>สแกน</a>
+                <?php if($shelter_id !== 'all'): ?>
+                    <a href="evacuee_form.php?shelter_id=<?php echo $shelter_id; ?>&mode=add" class="btn btn-primary fw-bold">
+                        <i class="fas fa-user-plus me-1"></i>ลงทะเบียนใหม่
+                    </a>
+                <?php endif; ?>
             </div>
         </div>
     </div>
 
-    <!-- Mini Stats -->
+    <!-- Stats Row -->
     <div class="row g-3 mb-4">
-        <div class="col-md-3 col-6">
-            <div class="mini-stat-card border-bottom-primary" style="border-bottom: 4px solid #3b82f6;">
-                <div class="mini-stat-value text-primary"><?php echo number_format($stats['staying']); ?></div>
-                <div class="mini-stat-label">กำลังพักอาศัย</div>
+        <div class="col-md-4">
+            <div class="stat-mini-card border-bottom border-primary border-4">
+                <div class="text-muted small text-uppercase">ผู้อพยพปัจจุบัน</div>
+                <div class="h3 fw-bold mb-0"><?php echo number_format($total_records); ?> <small class="fs-6 text-muted">คน</small></div>
             </div>
         </div>
-        <div class="col-md-3 col-6">
-            <div class="mini-stat-card" style="border-bottom: 4px solid #10b981;">
-                <div class="mini-stat-value text-success"><?php echo number_format($shelter['capacity'] - $stats['staying']); ?></div>
-                <div class="mini-stat-label">ที่ว่างคงเหลือ</div>
+        <div class="col-md-4">
+            <div class="stat-mini-card border-bottom border-warning border-4">
+                <div class="text-muted small text-uppercase">กลุ่มเปราะบาง</div>
+                <div class="h3 fw-bold mb-0 text-warning"><?php echo number_format($vulnerable_count); ?> <small class="fs-6 text-muted">คน</small></div>
             </div>
         </div>
-        <div class="col-md-3 col-6">
-            <div class="mini-stat-card" style="border-bottom: 4px solid #f59e0b;">
-                <div class="mini-stat-value text-warning"><?php echo number_format($stats['vulnerable']); ?></div>
-                <div class="mini-stat-label">กลุ่มเปราะบาง</div>
-            </div>
-        </div>
-        <div class="col-md-3 col-6">
-            <div class="mini-stat-card" style="border-bottom: 4px solid #64748b;">
-                <div class="mini-stat-value text-secondary"><?php echo number_format($stats['total']); ?></div>
-                <div class="mini-stat-label">ยอดสะสมทั้งหมด</div>
+        <div class="col-md-4">
+            <div class="stat-mini-card border-bottom border-info border-4">
+                <div class="text-muted small text-uppercase">อัตราการรองรับ</div>
+                <?php $occ = ($shelter['capacity'] > 0) ? ($total_records / $shelter['capacity']) * 100 : 0; ?>
+                <div class="h3 fw-bold mb-0 text-info"><?php echo round($occ, 1); ?>%</div>
             </div>
         </div>
     </div>
 
-    <!-- Alert Messages -->
-    <?php if (isset($_SESSION['swal_success'])): ?>
-        <script>Swal.fire('สำเร็จ', '<?php echo $_SESSION['swal_success']; ?>', 'success');</script>
-        <?php unset($_SESSION['swal_success']); ?>
-    <?php endif; ?>
-
-    <!-- Evacuee List Table -->
-    <div class="card border-0 shadow-sm rounded-3">
+    <!-- Table Card -->
+    <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
         <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
-            <h6 class="mb-0 fw-bold text-dark"><i class="fas fa-list me-2"></i> รายชื่อผู้พักพิง (Roster)</h6>
-            
-            <div class="d-flex align-items-center">
-                <small class="text-muted me-2">แสดง <?php echo $limit; ?> รายการ/หน้า</small>
-                <input type="text" id="tableSearch" class="form-control form-control-sm w-auto" placeholder="ค้นหาในหน้านี้..." onkeyup="filterTable()">
-            </div>
+            <h6 class="mb-0 fw-bold"><i class="fas fa-list-ul me-2 text-primary"></i>บัญชีรายชื่อผู้เข้าพักพิง</h6>
+            <input type="text" id="tableSearch" class="form-control form-control-sm w-auto" placeholder="ค้นหาชื่อ..." onkeyup="filterTable()">
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0 table-custom" id="evacueeTable">
-                    <thead>
+                <table class="table table-hover align-middle mb-0" id="evacueeTable">
+                    <thead class="bg-light small text-muted text-uppercase">
                         <tr>
                             <th class="ps-4">ชื่อ-นามสกุล</th>
-                            <th>เพศ/อายุ</th>
-                            <th>สุขภาพ/เพิ่มเติม</th>
-                            <th>วันที่เข้าพัก</th>
-                            <th>สถานะ</th>
+                            <th>ข้อมูลทั่วไป</th>
+                            <?php if($shelter_id === 'all'): ?><th>ศูนย์พักพิง</th><?php endif; ?>
+                            <th>สุขภาพ</th>
                             <th class="text-end pe-4">จัดการ</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if (count($evacuees) > 0): ?>
-                            <?php foreach ($evacuees as $row): ?>
+                        <?php if($total_records > 0): ?>
+                            <?php foreach($evacuees as $row): ?>
                             <tr>
                                 <td class="ps-4">
-                                    <div class="fw-bold text-dark"><?php echo htmlspecialchars($row['first_name'] . ' ' . $row['last_name']); ?></div>
-                                    <small class="text-muted"><i class="far fa-id-card me-1"></i> <?php echo $row['id_card'] ? $row['id_card'] : '-'; ?></small>
+                                    <div class="fw-bold text-dark"><?php echo h($row['first_name'] . ' ' . $row['last_name']); ?></div>
+                                    <small class="text-muted">ID Card: <?php echo maskIDCard($row['id_card']); ?></small>
                                 </td>
                                 <td>
-                                    <?php 
-                                        $gender_icon = ($row['gender'] == 'male') ? '<i class="fas fa-mars text-primary"></i>' : (($row['gender'] == 'female') ? '<i class="fas fa-venus text-danger"></i>' : '');
-                                        echo "$gender_icon " . ($row['age'] > 0 ? $row['age'] . " ปี" : "-");
-                                    ?>
+                                    <?php echo ($row['gender'] == 'male' ? 'ชาย' : 'หญิง'); ?> / 
+                                    <?php echo (isset($row['age']) ? $row['age'] : calculateAge($row['birth_date'])); ?> ปี
                                 </td>
+                                <?php if($shelter_id === 'all'): ?>
+                                    <td><span class="badge bg-light text-dark border"><?php echo h($row['shelter_name']); ?></span></td>
+                                <?php endif; ?>
                                 <td>
                                     <?php if($row['health_condition']): ?>
-                                        <span class="badge bg-danger bg-opacity-10 text-danger border border-danger">
-                                            <i class="fas fa-notes-medical"></i> <?php echo htmlspecialchars($row['health_condition']); ?>
-                                        </span>
+                                        <span class="badge bg-danger bg-opacity-10 text-danger border border-danger-subtle small"><?php echo h($row['health_condition']); ?></span>
                                     <?php else: ?>
                                         <span class="text-muted small">- ปกติ -</span>
                                     <?php endif; ?>
                                 </td>
-                                <td>
-                                    <div class="small"><?php echo thaiDate(date('Y-m-d', strtotime($row['check_in_date']))); ?></div>
-                                    <div class="text-muted small" style="font-size: 0.75rem;"><?php echo date('H:i', strtotime($row['created_at'])); ?> น.</div>
-                                </td>
-                                <td>
-                                    <?php if ($row['check_out_date']): ?>
-                                        <span class="status-badge status-left">
-                                            <i class="fas fa-sign-out-alt me-1"></i> ออกแล้ว
-                                        </span>
-                                        <div class="small text-muted mt-1" style="font-size: 0.7rem;">
-                                            <?php echo thaiDate(date('Y-m-d', strtotime($row['check_out_date']))); ?>
-                                        </div>
-                                    <?php else: ?>
-                                        <span class="status-badge status-staying">
-                                            <i class="fas fa-bed me-1"></i> พักอยู่
-                                        </span>
-                                    <?php endif; ?>
-                                </td>
                                 <td class="text-end pe-4">
-                                    <div class="btn-group">
-                                        <a href="evacuee_form.php?id=<?php echo $row['id']; ?>&mode=edit" class="btn btn-outline-secondary btn-action" title="แก้ไขข้อมูล">
-                                            <i class="fas fa-edit"></i>
+                                    <div class="btn-group shadow-sm">
+                                        <a href="evacuee_card.php?id=<?php echo $row['id']; ?>" target="_blank" class="btn btn-sm btn-light border" title="บัตรประจำตัว">
+                                            <i class="fas fa-id-card text-primary"></i>
                                         </a>
-                                        
-                                        <?php if (!$row['check_out_date']): ?>
-                                            <button onclick="confirmCheckout(<?php echo $row['id']; ?>, '<?php echo htmlspecialchars($row['first_name']); ?>')" 
-                                                    class="btn btn-outline-warning btn-action ms-1" title="จำหน่ายออก (Check-out)">
-                                                <i class="fas fa-sign-out-alt"></i>
-                                            </button>
-                                        <?php endif; ?>
-
-                                        <?php if($_SESSION['role'] == 'admin'): ?>
-                                            <button onclick="confirmDelete(<?php echo $row['id']; ?>)" class="btn btn-outline-danger btn-action ms-1" title="ลบข้อมูล">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
-                                        <?php endif; ?>
+                                        <a href="evacuee_form.php?id=<?php echo $row['id']; ?>&mode=edit" class="btn btn-sm btn-light border ms-1" title="แก้ไข">
+                                            <i class="fas fa-edit text-secondary"></i>
+                                        </a>
                                     </div>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
-                            <tr>
-                                <td colspan="6" class="text-center py-5 text-muted">
-                                    <i class="fas fa-user-slash fa-3x mb-3 text-light"></i><br>
-                                    ยังไม่มีผู้เข้าพักในศูนย์นี้
-                                </td>
-                            </tr>
+                            <tr><td colspan="5" class="text-center py-5 text-muted">ไม่พบข้อมูลผู้เข้าพักพิง</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
             </div>
-
-            <!-- Pagination -->
-            <div class="p-3 bg-light border-top">
+            <div class="p-3 border-top bg-light">
                 <?php echo renderPagination($page, $total_pages, ['shelter_id' => $shelter_id]); ?>
-                <div class="text-center text-muted small mt-2">
-                    แสดง <?php echo count($evacuees); ?> จากทั้งหมด <?php echo number_format($total_records); ?> รายการ
-                </div>
             </div>
-
         </div>
     </div>
 </div>
 
-<?php include 'includes/footer.php'; ?>
-
 <script>
-    // Client-side Table Filter (ค้นหาเฉพาะหน้าปัจจุบัน)
     function filterTable() {
-        var input, filter, table, tr, td, i, txtValue;
-        input = document.getElementById("tableSearch");
-        filter = input.value.toUpperCase();
-        table = document.getElementById("evacueeTable");
-        tr = table.getElementsByTagName("tr");
-        for (i = 0; i < tr.length; i++) {
-            td = tr[i].getElementsByTagName("td")[0]; // Search in Name column
-            if (td) {
-                txtValue = td.textContent || td.innerText;
-                if (txtValue.toUpperCase().indexOf(filter) > -1) {
-                    tr[i].style.display = "";
-                } else {
-                    tr[i].style.display = "none";
-                }
-            }       
+        let input = document.getElementById("tableSearch").value.toUpperCase();
+        let rows = document.getElementById("evacueeTable").getElementsByTagName("tr");
+        for (let i = 1; i < rows.length; i++) {
+            let nameCell = rows[i].getElementsByTagName("td")[0];
+            if (nameCell) {
+                let text = nameCell.textContent || nameCell.innerText;
+                rows[i].style.display = text.toUpperCase().indexOf(input) > -1 ? "" : "none";
+            }
         }
-    }
-
-    function confirmCheckout(id, name) {
-        Swal.fire({
-            title: 'ยืนยันจำหน่ายออก?',
-            text: `ผู้ประสบภัย "${name}" ได้ออกจากศูนย์พักพิงแล้วใช่หรือไม่?`,
-            icon: 'question',
-            showCancelButton: true,
-            confirmButtonColor: '#f59e0b',
-            cancelButtonColor: '#64748b',
-            confirmButtonText: 'ใช่, จำหน่ายออก',
-            cancelButtonText: 'ยกเลิก'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                window.location.href = `evacuee_status.php?action=checkout&id=${id}&shelter_id=<?php echo $shelter_id; ?>`;
-            }
-        });
-    }
-
-    function confirmDelete(id) {
-        Swal.fire({
-            title: 'ยืนยันการลบ?',
-            text: "ข้อมูลจะถูกลบถาวรและไม่สามารถกู้คืนได้!",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#ef4444',
-            cancelButtonColor: '#64748b',
-            confirmButtonText: 'ลบข้อมูลทันที',
-            cancelButtonText: 'ยกเลิก'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                window.location.href = `evacuee_status.php?action=delete&id=${id}&shelter_id=<?php echo $shelter_id; ?>`;
-            }
-        });
     }
 </script>
 
-</body>
-</html>
+<?php include 'includes/footer.php'; ?>

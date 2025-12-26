@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Dec 26, 2025 at 07:38 AM
+-- Generation Time: Dec 26, 2025 at 11:05 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.1.25
 
@@ -40,13 +40,6 @@ CREATE TABLE `announcements` (
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `announcements`
---
-
-INSERT INTO `announcements` (`id`, `title`, `content`, `type`, `status`, `target_shelter_id`, `is_active`, `created_by`, `created_at`, `updated_at`) VALUES
-(1, 'ทดสอบ', 'อออ', '', 'Active', NULL, 1, 1, '2025-12-26 04:29:11', '2025-12-26 04:36:21');
-
 -- --------------------------------------------------------
 
 --
@@ -72,6 +65,29 @@ CREATE TABLE `caretakers` (
 INSERT INTO `caretakers` (`id`, `prefix`, `first_name`, `last_name`, `shelter_id`, `full_name`, `phone`, `position`, `status`) VALUES
 (1, 'นาย', 'นายปฐวีกานต์', 'ศรีคราม', 1, 'นายนายปฐวีกานต์ ศรีคราม', '081-234-5678', 'หัวหน้าศูนย์พักพิง', 'active'),
 (2, 'นาย', 'นายปฐวีกานต์', 'ศรีคราม', 2, 'พระครูวิจิตร', '089-876-5432', 'ผู้ดูแลสถานที่', 'active');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `distribution`
+--
+
+CREATE TABLE `distribution` (
+  `id` int(11) NOT NULL,
+  `evacuee_id` int(11) NOT NULL COMMENT 'ID ผู้อพยพ',
+  `item_id` int(11) NOT NULL COMMENT 'ID สินค้าในคลัง',
+  `quantity` int(11) NOT NULL COMMENT 'จำนวนที่แจก',
+  `distributed_at` timestamp NOT NULL DEFAULT current_timestamp() COMMENT 'วันที่เวลาที่แจก',
+  `note` varchar(255) DEFAULT NULL COMMENT 'หมายเหตุ',
+  `distributed_by` int(11) DEFAULT NULL COMMENT 'ID เจ้าหน้าที่ผู้บันทึก'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `distribution`
+--
+
+INSERT INTO `distribution` (`id`, `evacuee_id`, `item_id`, `quantity`, `distributed_at`, `note`, `distributed_by`) VALUES
+(1, 0, 7, 1, '2025-12-26 09:35:30', 'อนุมัติจากคำร้องเลขที่ #1 (ศูนย์: วัดเจียงอีศรีมงคลวราราม)', 1);
 
 -- --------------------------------------------------------
 
@@ -195,7 +211,7 @@ CREATE TABLE `inventory` (
 
 INSERT INTO `inventory` (`id`, `shelter_id`, `item_name`, `quantity`, `unit`, `last_updated`, `category`) VALUES
 (6, 2, 'น้ำดื่ม (แพ็ค)', 490, 'แพ็ค', '2025-12-24 10:20:53', 'food'),
-(7, 2, 'ข้าวสาร (ถุง 5kg)', 1000, 'ถุง', '2025-12-24 09:27:21', 'food'),
+(7, 2, 'ข้าวสาร (ถุง 5kg)', 999, 'ถุง', '2025-12-24 09:27:21', 'food'),
 (8, 2, 'บะหมี่กึ่งสำเร็จรูป (กล่อง)', 95, 'กล่อง', '2025-12-24 10:21:25', 'food'),
 (9, 2, 'ปลากระป๋อง (กระป๋อง)', 500, 'กล่อง', '2025-12-23 11:27:31', 'food'),
 (10, 2, 'มุ้ง (หลัง)', 500, 'หลัง', '2025-12-23 11:27:54', 'general'),
@@ -264,15 +280,22 @@ CREATE TABLE `medical_records` (
 
 CREATE TABLE `requests` (
   `id` int(11) NOT NULL,
-  `shelter_id` int(11) NOT NULL,
-  `requester_name` varchar(255) DEFAULT NULL,
-  `item_needed` varchar(255) DEFAULT NULL,
-  `quantity` int(11) DEFAULT NULL,
-  `unit` varchar(50) DEFAULT NULL,
-  `status` enum('Pending','Approved','Rejected','Completed') DEFAULT 'Pending',
-  `created_at` datetime DEFAULT current_timestamp(),
-  `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+  `shelter_id` int(11) NOT NULL COMMENT 'ID ศูนย์พักพิงที่ขอ',
+  `item_id` int(11) NOT NULL COMMENT 'ID สินค้าจากตาราง inventory',
+  `quantity` int(11) NOT NULL COMMENT 'จำนวนที่ขอ',
+  `priority` enum('low','medium','high') DEFAULT 'low',
+  `status` enum('pending','approved','rejected') DEFAULT 'pending',
+  `reason` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `requests`
+--
+
+INSERT INTO `requests` (`id`, `shelter_id`, `item_id`, `quantity`, `priority`, `status`, `reason`, `created_at`, `updated_at`) VALUES
+(1, 2, 7, 1, 'low', 'approved', '', '2025-12-26 09:27:38', '2025-12-26 09:35:30');
 
 -- --------------------------------------------------------
 
@@ -303,13 +326,13 @@ CREATE TABLE `shelters` (
 
 INSERT INTO `shelters` (`id`, `incident_id`, `name`, `location`, `district`, `province`, `latitude`, `longitude`, `capacity`, `contact_person`, `contact_phone`, `status`, `last_updated`, `created_at`) VALUES
 (1, 1, 'โรงเรียนสตรีสิริเกศ', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', NULL, NULL, NULL, NULL, 500, NULL, '045-612-888', 'open', '2025-12-22 14:12:37', '2025-12-26 11:05:10'),
-(2, 1, 'วัดเจียงอีศรีมงคลวราราม', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', '', '', 15.11950300, 104.28323800, 300, 'แม็ก', '081-999-1234', 'open', '2025-12-26 10:43:07', '2025-12-26 11:05:10'),
-(3, 1, 'หอประชุมอำเภอกันทรลักษ์', 'ต.หนองหญ้าลาด อ.กันทรลักษ์', NULL, NULL, NULL, NULL, 1000, NULL, '045-661-555', 'open', '2025-12-22 14:12:37', '2025-12-26 11:05:10'),
-(4, 2, 'ศาลากลางหมู่บ้านหนองแคน', 'ต.หนองแคน อ.อุทุมพรพิสัย', NULL, NULL, NULL, NULL, 100, NULL, '089-777-6666', 'closed', '2025-12-22 14:12:37', '2025-12-26 11:05:10'),
-(5, 3, 'ศูนย์อาคารพละวีสมหมาย', 'เมืองศรีสะเกษ', '', '', 15.10114200, 104.34057000, 3000, '', '0981051534', 'open', '2025-12-26 10:56:35', '2025-12-26 11:05:10'),
-(6, 1, 'วัดเจียงอีศรีมงคลวราราม', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', NULL, NULL, 15.10787700, 104.33268200, 300, NULL, '081-999-1234', 'open', '2025-12-26 10:40:01', '2025-12-26 11:05:10'),
-(7, 1, 'วัดเจียงอีศรีมงคลวราราม', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', NULL, NULL, 15.11949300, 104.28323200, 300, NULL, '081-999-1234', 'open', '2025-12-26 10:40:33', '2025-12-26 11:05:10'),
-(8, 1, 'วัดเจียงอีศรีมงคลวราราม', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', NULL, NULL, 15.11949300, 104.28323200, 300, NULL, '081-999-1234', 'open', '2025-12-26 10:40:37', '2025-12-26 11:05:10'),
+(2, 1, 'วัดเจียงอีศรีมงคลวราราม', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', '', '', 15.11950300, 104.28323800, 300, 'แม็ก', '081-999-1234', 'open', '2025-12-26 14:09:32', '2025-12-26 11:05:10'),
+(3, 1, 'หอประชุมอำเภอกันทรลักษ์', 'ต.หนองหญ้าลาด อ.กันทรลักษ์', 'ศรีสะเกษ', 'ศรีสะเกษ', 13.75630000, 100.50180000, 1000, 'นายปฐวีกานต์  ศรีคราม', '045-661-555', 'open', '2025-12-26 15:56:16', '2025-12-26 11:05:10'),
+(4, 2, 'ศาลากลางหมู่บ้านหนองแคน', 'ต.หนองแคน อ.อุทุมพรพิสัย', 'ศรีสะเกษ', 'ศรีสะเกษ', 13.75630000, 100.50180000, 100, 'นายปฐวีกานต์  ศรีคราม', '089-777-6666', 'closed', '2025-12-26 16:41:34', '2025-12-26 11:05:10'),
+(5, 3, 'ศูนย์อาคารพละวีสมหมาย', 'เมืองศรีสะเกษ', 'ศรีสะเกษ', 'ศรีสะเกษ', 15.10114200, 104.34057000, 3000, 'นายปฐวีกานต์  ศรีคราม', '0981051534', 'open', '2025-12-26 16:41:21', '2025-12-26 11:05:10'),
+(6, 1, 'วัดเจียงอีศรีมงคลวราราม', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', 'ศรีสะเกษ', 'ศรีสะเกษ', 15.10787700, 104.33268200, 300, 'นายปฐวีกานต์  ศรีคราม', '081-999-1234', 'open', '2025-12-26 15:56:26', '2025-12-26 11:05:10'),
+(7, 1, 'วัดเจียงอีศรีมงคลวราราม', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', 'ศรีสะเกษ', 'ศรีสะเกษ', 15.11949300, 104.28323200, 300, 'นายปฐวีกานต์  ศรีคราม', '081-999-1234', 'open', '2025-12-26 16:41:16', '2025-12-26 11:05:10'),
+(8, 1, 'วัดเจียงอีศรีมงคลวราราม', 'ต.เมืองใต้ อ.เมือง จ.ศรีสะเกษ', 'ศรีสะเกษ', 'ศรีสะเกษ', 15.11949300, 104.28323200, 300, 'นายปฐวีกานต์  ศรีคราม', '081-999-1234', 'open', '2025-12-26 16:41:10', '2025-12-26 11:05:10'),
 (9, 3, 'ศูนย์ ม.กีฬา', '111', '', 'ศรีสะเกษ', 15.09878100, 104.33997000, 3000, 'นายปฐวีกานต์  ศรีคราม', '0981051534', 'open', '2025-12-26 11:05:23', '2025-12-26 11:05:23'),
 (10, 3, 'วัดเจียงอีศรีมงคลวราราม', 'ดดดด', 'ศรีสะเกษ', 'ศรีสะเกษ', 15.10784800, 104.33269000, 3000, 'นายปฐวีกานต์  ศรีคราม', '0981051534', 'open', '2025-12-26 11:06:11', '2025-12-26 11:06:11'),
 (11, 3, 'ศูนย์ ม.กีฬา 25', '111', 'ศรีสะเกษ', 'ศรีสะเกษ', 15.10090300, 104.34036200, 3000, 'นายปฐวีกานต์  ศรีคราม', '0981051534', 'open', '2025-12-26 11:06:51', '2025-12-26 11:06:51');
@@ -459,6 +482,27 @@ INSERT INTO `system_logs` (`id`, `user_id`, `action`, `description`, `ip_address
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `system_settings`
+--
+
+CREATE TABLE `system_settings` (
+  `setting_key` varchar(100) NOT NULL,
+  `setting_value` text DEFAULT NULL,
+  `description` varchar(255) DEFAULT NULL,
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `system_settings`
+--
+
+INSERT INTO `system_settings` (`setting_key`, `setting_value`, `description`, `updated_at`) VALUES
+('line_notify_active', '0', 'สถานะการเปิดใช้งาน (1=เปิด, 0=ปิด)', '2025-12-26 08:02:30'),
+('line_notify_token', '', 'Token สำหรับแจ้งเตือนผ่าน LINE', '2025-12-26 08:02:30');
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `users`
 --
 
@@ -529,6 +573,14 @@ ALTER TABLE `announcements`
 ALTER TABLE `caretakers`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_shelter_caretaker` (`shelter_id`);
+
+--
+-- Indexes for table `distribution`
+--
+ALTER TABLE `distribution`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `evacuee_id` (`evacuee_id`),
+  ADD KEY `item_id` (`item_id`);
 
 --
 -- Indexes for table `distribution_logs`
@@ -612,6 +664,12 @@ ALTER TABLE `system_logs`
   ADD KEY `idx_created_at` (`created_at`);
 
 --
+-- Indexes for table `system_settings`
+--
+ALTER TABLE `system_settings`
+  ADD PRIMARY KEY (`setting_key`);
+
+--
 -- Indexes for table `users`
 --
 ALTER TABLE `users`
@@ -633,6 +691,12 @@ ALTER TABLE `announcements`
 --
 ALTER TABLE `caretakers`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+
+--
+-- AUTO_INCREMENT for table `distribution`
+--
+ALTER TABLE `distribution`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `distribution_logs`
@@ -680,7 +744,7 @@ ALTER TABLE `medical_records`
 -- AUTO_INCREMENT for table `requests`
 --
 ALTER TABLE `requests`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `shelters`

@@ -1,9 +1,12 @@
 <?php
-// includes/functions.php
-// รวมฟังก์ชันใช้งานทั่วไป (Helper Functions)
+/**
+ * includes/functions.php
+ * รวมฟังก์ชันใช้งานทั่วไป (Helper Functions) สำหรับระบบบริหารจัดการศูนย์พักพิง
+ * ครอบคลุมด้าน Security, Privacy, Validation และ UI Components
+ */
 
 /**
- * [SECURITY] Clean Input: สำหรับเตรียมข้อมูลก่อนนำไปประมวลผล
+ * [SECURITY] Clean Input: สำหรับเตรียมข้อมูลก่อนนำไปประมวลผล (ป้องกัน Null Byte และตัดช่องว่าง)
  */
 function cleanInput($data) {
     if (is_array($data)) {
@@ -13,14 +16,15 @@ function cleanInput($data) {
 }
 
 /**
- * [SECURITY] Escape Output: สำหรับแสดงผลหน้าเว็บป้องกัน XSS
+ * [SECURITY] Escape Output: สำหรับแสดงผลหน้าเว็บเพื่อป้องกัน XSS (Cross-Site Scripting)
  */
 function h($string) {
     return htmlspecialchars($string ?? '', ENT_QUOTES, 'UTF-8');
 }
 
 /**
- * [PRIVACY] Mask ID Card: ปิดบังเลขบัตรประชาชน
+ * [PRIVACY] Mask ID Card: ปิดบังเลขบัตรประชาชนเพื่อความเป็นส่วนตัว
+ * ตัวอย่าง: 1100101xxxxx1
  */
 function maskIDCard($id_card) {
     if (strlen($id_card) < 13) return $id_card; 
@@ -28,7 +32,7 @@ function maskIDCard($id_card) {
 }
 
 /**
- * [SECURITY] CSRF Protection
+ * [SECURITY] CSRF Protection: สร้างและตรวจสอบ Token เพื่อป้องกันการโจมตีข้ามไซต์
  */
 function generateCSRFToken() {
     if (session_status() == PHP_SESSION_NONE) { session_start(); }
@@ -47,7 +51,7 @@ function validateCSRFToken($token) {
 }
 
 /**
- * บันทึก Log (MySQLi)
+ * [LOGGING] บันทึกกิจกรรมการใช้งาน (MySQLi)
  */
 function logActivity($conn, $user_id, $action, $description) {
     $ip = $_SERVER['REMOTE_ADDR'];
@@ -64,7 +68,7 @@ function logActivity($conn, $user_id, $action, $description) {
 }
 
 /**
- * [VALIDATION] ตรวจสอบเลขบัตรประชาชน
+ * [VALIDATION] ตรวจสอบความถูกต้องของเลขบัตรประชาชนไทย
  */
 function validateThaiID($id) {
     if(strlen($id) != 13 || !ctype_digit($id)) return false;
@@ -78,7 +82,23 @@ function validateThaiID($id) {
 }
 
 /**
- * [UI] Pagination
+ * [UI] คำนวณอายุจากวันเกิด
+ */
+function calculateAge($birthDate) {
+    if (empty($birthDate) || $birthDate == '0000-00-00') {
+        return 0;
+    }
+    try {
+        $today = new DateTime('today');
+        $birth = new DateTime($birthDate);
+        return $birth->diff($today)->y;
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+/**
+ * [UI] สร้างแถบนำทางเลขหน้า (Pagination)
  */
 function renderPagination($currentPage, $totalPages, $queryParams = []) {
     if ($totalPages <= 1) return '';
@@ -92,31 +112,33 @@ function renderPagination($currentPage, $totalPages, $queryParams = []) {
     
     $html = '<nav aria-label="Page navigation"><ul class="pagination justify-content-center mt-4">';
     
+    // ปุ่มก่อนหน้า
     $prevDisabled = ($currentPage <= 1) ? 'disabled' : '';
     $prevPage = max(1, $currentPage - 1);
-    $html .= '<li class="page-item ' . $prevDisabled . '"><a class="page-link" href="' . $baseUrl . '?page=' . $prevPage . $queryString . '">ก่อนหน้า</a></li>';
+    $html .= '<li class="page-item ' . $prevDisabled . '"><a class="page-link shadow-sm" href="' . $baseUrl . '?page=' . $prevPage . $queryString . '">ก่อนหน้า</a></li>';
     
     $start = max(1, $currentPage - 2);
     $end = min($totalPages, $currentPage + 2);
 
     if($start > 1) {
-        $html .= '<li class="page-item"><a class="page-link" href="' . $baseUrl . '?page=1' . $queryString . '">1</a></li>';
+        $html .= '<li class="page-item"><a class="page-link shadow-sm" href="' . $baseUrl . '?page=1' . $queryString . '">1</a></li>';
         if($start > 2) $html .= '<li class="page-item disabled"><span class="page-link">...</span></li>';
     }
 
     for ($i = $start; $i <= $end; $i++) {
         $active = ($i == $currentPage) ? 'active' : '';
-        $html .= '<li class="page-item ' . $active . '"><a class="page-link" href="' . $baseUrl . '?page=' . $i . $queryString . '">' . $i . '</a></li>';
+        $html .= '<li class="page-item ' . $active . '"><a class="page-link shadow-sm" href="' . $baseUrl . '?page=' . $i . $queryString . '">' . $i . '</a></li>';
     }
 
     if($end < $totalPages) {
         if($end < $totalPages - 1) $html .= '<li class="page-item disabled"><span class="page-link">...</span></li>';
-        $html .= '<li class="page-item"><a class="page-link" href="' . $baseUrl . '?page=' . $totalPages . $queryString . '">' . $totalPages . '</a></li>';
+        $html .= '<li class="page-item"><a class="page-link shadow-sm" href="' . $baseUrl . '?page=' . $totalPages . $queryString . '">' . $totalPages . '</a></li>';
     }
 
+    // ปุ่มถัดไป
     $nextDisabled = ($currentPage >= $totalPages) ? 'disabled' : '';
     $nextPage = min($totalPages, $currentPage + 1);
-    $html .= '<li class="page-item ' . $nextDisabled . '"><a class="page-link" href="' . $baseUrl . '?page=' . $nextPage . $queryString . '">ถัดไป</a></li>';
+    $html .= '<li class="page-item ' . $nextDisabled . '"><a class="page-link shadow-sm" href="' . $baseUrl . '?page=' . $nextPage . $queryString . '">ถัดไป</a></li>';
     
     $html .= '</ul></nav>';
     return $html;
@@ -124,7 +146,9 @@ function renderPagination($currentPage, $totalPages, $queryParams = []) {
 
 // --- Date Functions ---
 
-// ฟังก์ชันแปลงวันที่ไทย (ตัวหลัก)
+/**
+ * แปลงวันที่เป็นรูปแบบไทยย่อ (เช่น 26 ธ.ค. 68)
+ */
 function thai_date($strDate, $showTime = false) {
     if (!$strDate || $strDate == '0000-00-00' || $strDate == '0000-00-00 00:00:00') return '-';
     if (!is_numeric($strDate)) { $strDate = strtotime($strDate); }
@@ -144,7 +168,9 @@ function thai_date($strDate, $showTime = false) {
     return $output;
 }
 
-// ฟังก์ชันแปลงวันที่ไทยเต็ม
+/**
+ * แปลงวันที่เป็นรูปแบบไทยเต็ม (เช่น 26 ธันวาคม 2568)
+ */
 function thai_date_full($strDate, $showTime = false) {
     if (!$strDate || $strDate == '0000-00-00') return '-';
     if (!is_numeric($strDate)) { $strDate = strtotime($strDate); }
@@ -163,8 +189,9 @@ function thai_date_full($strDate, $showTime = false) {
     return $output;
 }
 
-// *** เพิ่มฟังก์ชันนี้เพื่อให้รองรับ request_manager.php ***
+/**
+ * ฟังก์ชัน Wrapper สำหรับหน้า request_manager.php
+ */
 function thaiDate($date) {
     return thai_date($date, false);
 }
-?>

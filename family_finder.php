@@ -1,186 +1,153 @@
 <?php
-// family_finder.php
-// ระบบติดตามญาติ (Public Access) - ออกแบบตามหลัก PDPA
+/**
+ * family_finder.php
+ * หน้าสำหรับประชาชนทั่วไป (Public Access)
+ * - สืบค้นรายชื่อญาติ (แสดงข้อมูลแบบจำกัด)
+ * - ดูประกาศล่าสุดจากศูนย์บัญชาการ
+ */
 require_once 'config/db.php';
 require_once 'includes/functions.php';
 
-// ไม่ต้องเช็ค Login เพราะเป็นหน้า Public
-
-$fname = isset($_GET['fname']) ? trim($_GET['fname']) : '';
-$lname = isset($_GET['lname']) ? trim($_GET['lname']) : '';
+// ใช้ MySQLi ตามความต้องการล่าสุด
+$search_query = isset($_GET['q']) ? trim($_GET['q']) : '';
 $results = [];
-$searched = false;
 
-if ($fname && $lname) {
-    $searched = true;
-    // Query: ค้นหาเฉพาะคนที่ยังพักอยู่ (check_out_date IS NULL)
-    // การค้นหาต้องตรงเป๊ะ (Exact Match) เพื่อป้องกันการสุ่มชื่อ
-    $sql = "SELECT e.first_name, e.last_name, e.gender, e.age, e.created_at, 
-            s.name as shelter_name, s.contact_phone as shelter_contact, i.name as incident_name
+if ($search_query && strlen($search_query) >= 2) {
+    // ค้นหาเฉพาะผู้ที่ยังพักอยู่ (check_out_date IS NULL) และดึงชื่อศูนย์พักพิง
+    // ใช้ LIKE เพื่อให้ค้นหาได้ยืดหยุ่น
+    $sql = "SELECT e.first_name, e.last_name, e.gender, e.age, s.name as shelter_name, s.location
             FROM evacuees e
             JOIN shelters s ON e.shelter_id = s.id
-            JOIN incidents i ON e.incident_id = i.id
-            WHERE e.first_name = ? AND e.last_name = ? AND e.check_out_date IS NULL AND i.status = 'active'";
+            WHERE (e.first_name LIKE ? OR e.last_name LIKE ? OR e.id_card LIKE ?)
+            AND e.check_out_date IS NULL
+            LIMIT 10";
     
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([$fname, $lname]);
-    $results = $stmt->fetchAll();
+    $stmt = $conn->prepare($sql);
+    $search_term = "%$search_query%";
+    $stmt->bind_param("sss", $search_term, $search_term, $search_term);
+    $stmt->execute();
+    $results = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 }
+
+// ดึงประกาศล่าสุด 3 รายการ
+$announcements = $conn->query("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 3")->fetch_all(MYSQLI_ASSOC);
 ?>
 
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <title>ระบบติดตามญาติและผู้สูญหาย - Disaster Response</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- Bootstrap 5 -->
+    <title>ศูนย์ข้อมูลประชาชน - Disaster Management</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;600&display=swap" rel="stylesheet">
-    
     <style>
-        body { font-family: 'Prompt', sans-serif; background-color: #f0f2f5; }
-        .hero-section {
-            background: linear-gradient(135deg, #0f172a 0%, #334155 100%);
-            color: white;
-            padding: 60px 0;
-            margin-bottom: 40px;
-        }
-        .search-card {
-            background: white;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            padding: 30px;
-            margin-top: -50px;
-        }
-        .status-card {
-            border-left: 5px solid #10b981;
-            transition: transform 0.2s;
-        }
-        .status-card:hover { transform: translateY(-3px); }
-        .privacy-notice { font-size: 0.85rem; color: #64748b; }
+        body { font-family: 'Prompt', sans-serif; background-color: #f1f5f9; }
+        .hero-section { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; padding: 60px 0; border-bottom: 5px solid #fbbf24; }
+        .search-card { margin-top: -40px; border-radius: 15px; border: none; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .announcement-item { border-left: 4px solid #fbbf24; transition: transform 0.2s; }
+        .announcement-item:hover { transform: translateX(5px); }
     </style>
 </head>
 <body>
 
-    <!-- Navbar -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container">
-            <a class="navbar-brand fw-bold" href="index.php"><i class="fas fa-shield-alt me-2"></i>ระบบบริหารจัดการภัยพิบัติ</a>
-            <div class="ms-auto">
-                <a href="login.php" class="btn btn-outline-light btn-sm">สำหรับเจ้าหน้าที่</a>
-            </div>
-        </div>
-    </nav>
-
-    <!-- Hero Section -->
-    <div class="hero-section text-center">
-        <div class="container">
-            <h1 class="fw-bold mb-3">ตรวจสอบสถานะญาติ / ผู้ประสบภัย</h1>
-            <p class="lead text-white-50">"เราช่วยคุณค้นหา เพื่อความอุ่นใจของครอบครัว"</p>
-        </div>
+<div class="hero-section text-center">
+    <div class="container">
+        <h1 class="display-5 fw-bold mb-3"><i class="fas fa-search-location me-2"></i>ศูนย์สืบค้นข้อมูลประชาชน</h1>
+        <p class="lead opacity-75">ค้นหาตำแหน่งที่พักของญาติพี่น้องและติดตามประกาศสำคัญจากภาครัฐ</p>
     </div>
+</div>
 
-    <!-- Search Section -->
-    <div class="container pb-5">
-        <div class="row justify-content-center">
-            <div class="col-lg-8">
-                
-                <!-- Form Card -->
-                <div class="search-card mb-5">
-                    <form action="" method="GET">
-                        <div class="row g-3">
-                            <div class="col-md-5">
-                                <label class="form-label fw-bold">ชื่อจริง (ไม่ต้องมีคำนำหน้า)</label>
-                                <input type="text" name="fname" class="form-control form-control-lg" placeholder="เช่น สมชาย" required value="<?php echo htmlspecialchars($fname); ?>">
-                            </div>
-                            <div class="col-md-5">
-                                <label class="form-label fw-bold">นามสกุล</label>
-                                <input type="text" name="lname" class="form-control form-control-lg" placeholder="เช่น ใจดี" required value="<?php echo htmlspecialchars($lname); ?>">
-                            </div>
-                            <div class="col-md-2 d-grid">
-                                <label class="form-label d-none d-md-block">&nbsp;</label>
-                                <button type="submit" class="btn btn-primary btn-lg fw-bold"><i class="fas fa-search"></i> ค้นหา</button>
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <!-- Search Card -->
+            <div class="card search-card mb-5">
+                <div class="card-body p-4">
+                    <form action="" method="GET" class="row g-3">
+                        <div class="col-md-9">
+                            <div class="input-group input-group-lg">
+                                <span class="input-group-text bg-white border-end-0"><i class="fas fa-search text-muted"></i></span>
+                                <input type="text" name="q" class="form-control border-start-0" 
+                                       placeholder="ระบุชื่อ, นามสกุล หรือเลขบัตรฯ..." value="<?php echo htmlspecialchars($search_query); ?>">
                             </div>
                         </div>
-                        <div class="mt-3 text-center privacy-notice">
-                            <i class="fas fa-user-shield me-1"></i> ระบบจะแสดงเฉพาะข้อมูลสถานะความปลอดภัยและสถานที่พักพิง ตามนโยบายคุ้มครองข้อมูลส่วนบุคคล (PDPA)
+                        <div class="col-md-3">
+                            <button type="submit" class="btn btn-warning btn-lg w-100 fw-bold">ค้นหา</button>
                         </div>
                     </form>
                 </div>
+            </div>
 
-                <!-- Results -->
-                <?php if ($searched): ?>
-                    <?php if (count($results) > 0): ?>
-                        <h4 class="mb-4 text-center fw-bold text-success"><i class="fas fa-check-circle me-2"></i>พบข้อมูลในระบบ</h4>
-                        
-                        <?php foreach ($results as $row): ?>
-                        <div class="card status-card shadow-sm mb-3">
-                            <div class="card-body p-4">
-                                <div class="row align-items-center">
-                                    <div class="col-md-8">
-                                        <h4 class="fw-bold text-dark mb-1">
-                                            คุณ<?php echo htmlspecialchars($row['first_name'] . " " . $row['last_name']); ?>
-                                        </h4>
-                                        <div class="text-muted mb-3">
-                                            <span class="badge bg-secondary me-2">อายุ <?php echo $row['age']; ?> ปี</span>
-                                            <span class="badge bg-info text-dark"><?php echo htmlspecialchars($row['incident_name']); ?></span>
-                                        </div>
-                                        
-                                        <div class="d-flex align-items-center mb-2">
-                                            <div class="icon-box bg-success text-white rounded-circle p-2 me-3">
-                                                <i class="fas fa-user-check"></i>
-                                            </div>
-                                            <div>
-                                                <div class="small text-muted">สถานะปัจจุบัน</div>
-                                                <div class="fw-bold text-success">ปลอดภัย (ลงทะเบียนแล้ว)</div>
-                                            </div>
-                                        </div>
-
-                                        <div class="d-flex align-items-center">
-                                            <div class="icon-box bg-primary text-white rounded-circle p-2 me-3">
-                                                <i class="fas fa-campground"></i>
-                                            </div>
-                                            <div>
-                                                <div class="small text-muted">สถานที่พักพิง</div>
-                                                <div class="fw-bold text-primary"><?php echo htmlspecialchars($row['shelter_name']); ?></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="col-md-4 text-center border-start mt-3 mt-md-0">
-                                        <p class="small text-muted mb-2">ต้องการติดต่อศูนย์พักพิง?</p>
-                                        <h5 class="fw-bold text-dark mb-2"><i class="fas fa-phone-alt me-2"></i><?php echo htmlspecialchars($row['shelter_contact']); ?></h5>
-                                        <div class="small text-muted">ข้อมูล ณ: <?php echo thaiDate(date('Y-m-d', strtotime($row['created_at']))); ?></div>
+            <!-- News & Announcements -->
+            <div class="row g-4">
+                <!-- ข่าวสาร -->
+                <div class="col-md-5">
+                    <h5 class="fw-bold mb-3"><i class="fas fa-bullhorn text-danger me-2"></i>ประกาศล่าสุด</h5>
+                    <?php if ($announcements): ?>
+                        <?php foreach($announcements as $news): ?>
+                            <div class="card announcement-item shadow-sm mb-3">
+                                <div class="card-body p-3">
+                                    <h6 class="fw-bold mb-1"><?php echo htmlspecialchars($news['title']); ?></h6>
+                                    <p class="small text-muted mb-2 text-truncate"><?php echo strip_tags($news['content']); ?></p>
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span class="badge bg-light text-dark small" style="font-size: 0.65rem;">
+                                            <?php echo date('d M Y', strtotime($news['created_at'])); ?>
+                                        </span>
+                                        <a href="#" class="btn btn-sm btn-link p-0 text-decoration-none">อ่านต่อ..</a>
                                     </div>
                                 </div>
                             </div>
-                        </div>
                         <?php endforeach; ?>
-
                     <?php else: ?>
-                        <div class="alert alert-warning text-center py-5 shadow-sm rounded-3">
-                            <i class="fas fa-search-minus fa-4x mb-3 text-warning opacity-50"></i>
-                            <h4>ไม่พบข้อมูล "คุณ<?php echo htmlspecialchars($fname . ' ' . $lname); ?>"</h4>
-                            <p class="text-muted">
-                                บุคคลนี้อาจยังไม่ได้ลงทะเบียนเข้าศูนย์พักพิง หรือ ชื่อ-นามสกุล สะกดไม่ตรงกับบัตรประชาชน<br>
-                                กรุณาตรวจสอบตัวสะกดอีกครั้ง หรือติดต่อสายด่วน <strong>1784</strong>
-                            </p>
-                            <a href="family_finder.php" class="btn btn-outline-warning mt-2">ค้นหาใหม่</a>
+                        <div class="text-muted small p-4 text-center border rounded bg-white">ไม่มีประกาศใหม่ในขณะนี้</div>
+                    <?php endif; ?>
+                </div>
+
+                <!-- ผลการค้นหา -->
+                <div class="col-md-7">
+                    <h5 class="fw-bold mb-3"><i class="fas fa-users text-primary me-2"></i>ผลการค้นหาญาติ</h5>
+                    <?php if ($search_query): ?>
+                        <?php if ($results): ?>
+                            <?php foreach($results as $person): ?>
+                                <div class="card border-0 shadow-sm mb-3">
+                                    <div class="card-body p-3">
+                                        <div class="d-flex justify-content-between">
+                                            <h6 class="fw-bold mb-1">
+                                                คุณ <?php echo htmlspecialchars($person['first_name'] . ' ' . mb_substr($person['last_name'], 0, 2) . 'xxx'); ?>
+                                            </h6>
+                                            <span class="badge bg-success bg-opacity-10 text-success border border-success-subtle">พักพิงอยู่</span>
+                                        </div>
+                                        <div class="small text-muted mt-2">
+                                            <i class="fas fa-hospital me-1"></i> <strong>ศูนย์:</strong> <?php echo htmlspecialchars($person['shelter_name']); ?><br>
+                                            <i class="fas fa-map-marker-alt me-1"></i> <strong>พิกัด:</strong> <?php echo htmlspecialchars($person['location']); ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <div class="alert alert-light border text-center p-5 rounded-4">
+                                <i class="fas fa-user-slash fa-3x text-light mb-3"></i>
+                                <p class="mb-0 text-muted">ไม่พบข้อมูลผู้พักพิงตามที่ระบุ<br><small>กรุณาตรวจสอบชื่อ-นามสกุลอีกครั้ง</small></p>
+                            </div>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        <div class="alert alert-info border-0 shadow-sm small rounded-4">
+                            <i class="fas fa-info-circle me-2"></i>กรุณาระบุชื่อหรือนามสกุลอย่างน้อย 2 ตัวอักษรเพื่อเริ่มต้นการค้นหา
                         </div>
                     <?php endif; ?>
-                <?php endif; ?>
+                </div>
+            </div>
 
+            <div class="text-center mt-5 mb-5">
+                <p class="text-muted small">ต้องการความช่วยเหลือด่วน? ติดต่อสายด่วนนิรภัย 1784</p>
+                <a href="login.php" class="btn btn-sm btn-outline-secondary">สำหรับเจ้าหน้าที่</a>
             </div>
         </div>
     </div>
+</div>
 
-    <footer class="bg-dark text-white text-center py-3 mt-auto">
-        <div class="container small">
-            &copy; <?php echo date('Y'); ?> ระบบบริหารจัดการศูนย์พักพิงชั่วคราว. All Rights Reserved.
-        </div>
-    </footer>
-
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
