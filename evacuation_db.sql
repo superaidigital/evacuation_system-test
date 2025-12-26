@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Dec 25, 2025 at 11:54 AM
+-- Generation Time: Dec 26, 2025 at 04:02 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.1.25
 
@@ -20,6 +20,24 @@ SET time_zone = "+00:00";
 --
 -- Database: `evacuation_db`
 --
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `announcements`
+--
+
+CREATE TABLE `announcements` (
+  `id` int(11) NOT NULL,
+  `title` varchar(255) NOT NULL COMMENT 'หัวข้อประกาศ',
+  `content` text NOT NULL COMMENT 'เนื้อหารายละเอียด',
+  `type` enum('info','warning','danger','success') NOT NULL DEFAULT 'info' COMMENT 'ระดับความสำคัญ (ทั่วไป, เตือน, วิกฤต, สำเร็จ)',
+  `target_shelter_id` int(11) DEFAULT NULL COMMENT 'เป้าหมายศูนย์พักพิง (NULL = ประกาศทั่วทุกศูนย์)',
+  `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT 'สถานะการแสดงผล (1=แสดง, 0=ซ่อน)',
+  `created_by` int(11) NOT NULL COMMENT 'ID ผู้สร้าง',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -379,7 +397,14 @@ INSERT INTO `system_logs` (`id`, `user_id`, `action`, `description`, `ip_address
 (74, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 08:24:18'),
 (75, 2, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 08:24:21'),
 (76, 2, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 10:33:24'),
-(77, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 10:33:28');
+(77, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 10:33:28'),
+(78, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 11:44:37'),
+(79, 1, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 11:44:40'),
+(80, 1, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 11:47:11'),
+(81, 2, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 11:47:16'),
+(82, 2, 'Logout', 'ออกจากระบบ', '::1', '2025-12-25 11:48:05'),
+(83, 2, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-25 13:36:11'),
+(84, 2, 'Login', 'เข้าสู่ระบบสำเร็จ', '::1', '2025-12-26 02:31:08');
 
 -- --------------------------------------------------------
 
@@ -439,6 +464,14 @@ CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW 
 --
 -- Indexes for dumped tables
 --
+
+--
+-- Indexes for table `announcements`
+--
+ALTER TABLE `announcements`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `target_shelter_id` (`target_shelter_id`),
+  ADD KEY `is_active` (`is_active`);
 
 --
 -- Indexes for table `caretakers`
@@ -534,6 +567,12 @@ ALTER TABLE `users`
 --
 
 --
+-- AUTO_INCREMENT for table `announcements`
+--
+ALTER TABLE `announcements`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `caretakers`
 --
 ALTER TABLE `caretakers`
@@ -597,7 +636,7 @@ ALTER TABLE `shelter_requests`
 -- AUTO_INCREMENT for table `system_logs`
 --
 ALTER TABLE `system_logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=78;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=85;
 
 --
 -- AUTO_INCREMENT for table `users`

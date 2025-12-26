@@ -235,8 +235,8 @@ if ($role === 'admin') {
                 <div class="kpi-label">ผู้ประสบภัย</div>
                 <div class="kpi-value"><?php echo number_format($evac_stats['total']); ?></div>
                 <div class="small text-muted mt-2">
-                    <i class="fas fa-male me-1"></i> <?php echo number_format($evac_stats['male']); ?> | 
-                    <i class="fas fa-female me-1"></i> <?php echo number_format($evac_stats['female']); ?>
+                    <i class="fas fa-male me-1"></i> ชาย <?php echo number_format($evac_stats['male']); ?> | 
+                    <i class="fas fa-female me-1"></i> หญิง <?php echo number_format($evac_stats['female']); ?>
                 </div>
                 <i class="fas fa-users stat-icon-bg text-primary"></i>
             </div>

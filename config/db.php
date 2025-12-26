@@ -4,8 +4,7 @@
  * Updated: รวม Code ของคุณเข้ากับ Class Wrapper เพื่อให้รองรับไฟล์ระบบเก่าและใหม่
  */
 
-// 1. Configuration Constants (ตามที่คุณระบุ)
-// แนะนำ: ใน Production ควรย้ายค่าเหล่านี้ไปไว้ใน .env file
+// 1. Configuration Constants (ย้ายมาไว้ที่นี่เพื่อให้แก้ไขจุดเดียว)
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'evacuation_db');
 define('DB_USER', 'root');
@@ -17,12 +16,29 @@ header("X-Frame-Options: SAMEORIGIN");
 header("X-XSS-Protection: 1; mode=block");
 header("X-Content-Type-Options: nosniff");
 
-// 3. Create PDO Connection (Global Scope)
+// ตั้งค่า Timezone เป็นไทย
+date_default_timezone_set('Asia/Bangkok');
+
+// ==================================================================================
+// SECTION A: MySQLi Connection (Legacy Support for Existing System)
+// ==================================================================================
+// จำเป็นต้องมีส่วนนี้เพื่อให้ไฟล์เดิม (เช่น public_dashboard.php, user_manager.php) ทำงานได้
+$conn = mysqli_connect(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+
+if (!$conn) {
+    die("MySQLi Connection failed: " . mysqli_connect_error());
+}
+
+mysqli_set_charset($conn, DB_CHARSET);
+
+// ==================================================================================
+// SECTION B: PDO Connection (New System & Advanced Features)
+// ==================================================================================
 $options = [
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     PDO::ATTR_EMULATE_PREPARES   => false, // สำคัญ: ป้องกัน SQL Injection ขั้นสูง
-    PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci"
+    PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES " . DB_CHARSET . " COLLATE utf8mb4_unicode_ci"
 ];
 
 try {
@@ -33,8 +49,12 @@ try {
     // Security: บันทึก Error ลง Server Log แทนการแสดงหน้าเว็บ
     error_log("Database Connection Error: " . $e->getMessage());
     // แสดงข้อความทั่วไปแก่ผู้ใช้
-    die("ระบบฐานข้อมูลขัดข้อง กรุณาติดต่อผู้ดูแลระบบ (Error Code: DB001)");
+    die("ระบบฐานข้อมูลขัดข้อง (PDO Error) กรุณาติดต่อผู้ดูแลระบบ (Error Code: DB001)");
 }
+
+// ==================================================================================
+// SECTION C: Helper Functions
+// ==================================================================================
 
 // 4. Helper Function: Check Login
 function checkLogin() {
@@ -53,11 +73,9 @@ function checkLogin() {
 }
 
 // ==================================================================================
-// [COMPATIBILITY LAYER] ส่วนเสริมเพื่อรองรับ distribution_manager.php และไฟล์ระบบใหม่
+// SECTION D: Compatibility Layer (Database Class)
 // ==================================================================================
-// เราจำเป็นต้องมี Class Database และตัวแปร $db เนื่องจากไฟล์อื่นๆ ในระบบเรียกใช้รูปแบบนี้
-// หากไม่มีส่วนนี้ distribution_manager.php จะขึ้น Error ว่า "ไม่พบ Class Database"
-// ==================================================================================
+// ส่วนเสริมเพื่อรองรับ distribution_manager.php และไฟล์ระบบใหม่ที่เรียกใช้ Class Database
 
 class Database {
     public $pdo;
@@ -80,7 +98,7 @@ class Database {
         try {
             $stmt = $this->pdo->prepare($sql);
             $stmt->execute($params);
-            return $stmt;
+            return $stmt; // คืนค่าเป็น PDOStatement object
         } catch (PDOException $e) {
             error_log("DB Query Error: " . $e->getMessage());
             return false;
